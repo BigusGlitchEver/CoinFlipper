@@ -1,8 +1,7 @@
 -- states/map.lua
 -- Neighborhood cul-de-sac. 3 houses, sequential unlock.
+-- Portrait layout (720x1280): houses in a triangle around a central green patch.
 -- Click an unlocked, un-conquered house -> StateMachine.switch("game", name).
--- Conquered = green, playable = red, locked = grey.
--- House conquest is tracked in-memory; persistence is a later concern.
 
 local StateMachine = require("statemachine")
 
@@ -11,14 +10,14 @@ local lg = love.graphics
 local Map = {}
 
 -- Module-scope so conquest state survives state transitions.
--- (Reset via Map._reset() in tests.)
 local houses = {
-  { name = "Grandma", x = 360, y = 380, conquered = false },
-  { name = "Cat",     x = 640, y = 220, conquered = false },
-  { name = "GymBro",  x = 920, y = 380, conquered = false },
+  { name = "Grandma", x = 200, y = 500, conquered = false },
+  { name = "Cat",     x = 520, y = 500, conquered = false },
+  { name = "GymBro",  x = 360, y = 820, conquered = false },
 }
 
-local HOUSE_RADIUS = 70
+local HOUSE_RADIUS = 80
+local CUL_DE_SAC_CX, CUL_DE_SAC_CY, CUL_DE_SAC_R = 360, 660, 260
 
 local function isUnlocked(i)
   if i == 1 then return true end
@@ -36,22 +35,23 @@ local function houseAt(x, y)
   return nil, nil
 end
 
-function Map:enter(prev)
-end
-
+function Map:enter(prev) end
 function Map:exit() end
 function Map:update(dt) end
 
 function Map:draw()
+  lg.setColor(0.92, 0.92, 0.92)
+  lg.rectangle("fill", 0, 0, lg.getWidth(), lg.getHeight())
+
   -- Cul-de-sac patch.
   lg.setColor(0.42, 0.70, 0.32)
-  lg.circle("fill", 640, 360, 220)
+  lg.circle("fill", CUL_DE_SAC_CX, CUL_DE_SAC_CY, CUL_DE_SAC_R)
   lg.setColor(0.30, 0.55, 0.22)
   lg.setLineWidth(3)
-  lg.circle("line", 640, 360, 220)
+  lg.circle("line", CUL_DE_SAC_CX, CUL_DE_SAC_CY, CUL_DE_SAC_R)
 
-  lg.setColor(1, 1, 1)
-  lg.printf("NEIGHBORHOOD", 0, 36, lg.getWidth(), "center")
+  lg.setColor(0.1, 0.1, 0.1)
+  lg.printf("NEIGHBORHOOD", 0, 60, lg.getWidth(), "center")
 
   for i, h in ipairs(houses) do
     if h.conquered then
@@ -65,11 +65,11 @@ function Map:draw()
     lg.setColor(1, 1, 1)
     lg.setLineWidth(3)
     lg.circle("line", h.x, h.y, HOUSE_RADIUS)
-    lg.printf(h.name, h.x - 60, h.y - 8, 120, "center")
+    lg.printf(h.name, h.x - 80, h.y - 10, 160, "center")
     if not isUnlocked(i) then
-      lg.printf("LOCKED", h.x - 60, h.y + 14, 120, "center")
+      lg.printf("LOCKED", h.x - 80, h.y + 14, 160, "center")
     elseif h.conquered then
-      lg.printf("CONQUERED", h.x - 60, h.y + 14, 120, "center")
+      lg.printf("CONQUERED", h.x - 80, h.y + 14, 160, "center")
     end
   end
 end
@@ -85,14 +85,13 @@ end
 
 function Map:keypressed(k) end
 
--- Public hook: called from game.lua when the player wins a boss flip.
 function Map.markConquered(name)
   for _, h in ipairs(houses) do
     if h.name == name then h.conquered = true; return end
   end
 end
 
--- Test hooks. Underscore prefix = internal.
+-- Test hooks.
 Map._houses     = houses
 Map._isUnlocked = isUnlocked
 function Map._reset()

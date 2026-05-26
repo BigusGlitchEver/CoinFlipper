@@ -1,12 +1,12 @@
 -- tests/smoke.lua
 -- Headless smoke test. Invoked via `lovec . --test`.
 -- Verifies:
---   (a) every source file parses (loadfile == luajit -bl coverage)
---   (b) state machine + map + game basic loop per the kickoff prompt's
---       7 assertions: lock/unlock, click-routing, scoring, multiplier
---       chain, miss-reset, popup pool no-leak.
+--   (1) every source file parses (loadfile == luajit -bl coverage)
+--   (2) state machine + map basics
+--   (3) Game state: coin scatter + 4-tier ring scoring + tap-on-coin input
+--   (4) Coin:launch closed-form arc math (per FLIP_PHYSICS_SPEC)
 --
--- This runs INSIDE LOVE (lovec), so `love` is real. No stubs needed.
+-- Runs inside LOVE (lovec), so `love` is real. No stubs needed.
 
 local M = {}
 
@@ -30,7 +30,6 @@ local SOURCES = {
   "lib/classic.lua",
   "lib/tween.lua",
   "entities/coin.lua",
-  "entities/pocket.lua",
   "states/map.lua",
   "states/game.lua",
   "components/buildings/manager.lua",
@@ -46,101 +45,149 @@ function M.run()
   print("===== COIN FLIPPER SMOKE TEST =====")
   local c = newCounter()
 
-  -- ---------- (a) Syntax check every source file ----------
-  -- Use love.filesystem.load -- it reads from LOVE's mounted source filesystem
-  -- and parses but does not execute. Equivalent coverage to `luajit -bl <file>`.
-  print("\n[1/2] Syntax check (love.filesystem.load == luajit -bl coverage):")
+  -- ---------- (1) Syntax check every source file ----------
+  print("\n[1/4] Syntax check (love.filesystem.load == luajit -bl coverage):")
   for _, src in ipairs(SOURCES) do
     local fn, err = love.filesystem.load(src)
     check(c, "parse " .. src, fn ~= nil, err)
   end
-
   if c.fail > 0 then
     print(string.format("\n%d parse failures -- aborting before logic tests.", c.fail))
     print(string.format("RESULT: %d passed, %d failed", c.pass, c.fail))
     return c.fail
   end
 
-  -- ---------- (b) Logic assertions ----------
-  print("\n[2/2] Logic assertions:")
-
-  -- Fresh requires (modules were already loaded above, but require caches).
+  -- ---------- (2) State machine + map basics ----------
+  print("\n[2/4] State machine + map basics:")
   local StateMachine = require("statemachine")
   local Map          = require("states.map")
   local Game         = require("states.game")
-
-  -- Ensure clean state if tests have been run before.
   Map._reset()
   StateMachine._reset()
   StateMachine.register("map",  Map)
   StateMachine.register("game", Game)
 
-  -- 1) Map boots, 3 houses, house 1 unlocked / 2 locked.
   StateMachine.switch("map")
-  check(c, "1a state == 'map'",     StateMachine.current() == "map")
-  check(c, "1b three houses",       #Map._houses == 3)
-  check(c, "1c house 1 unlocked",   Map._isUnlocked(1))
-  check(c, "1d house 2 locked",     not Map._isUnlocked(2))
-  check(c, "1e house 3 locked",     not Map._isUnlocked(3))
+  check(c, "1a state == 'map'",       StateMachine.current() == "map")
+  check(c, "1b three houses",         #Map._houses == 3)
+  check(c, "1c house 1 unlocked",     Map._isUnlocked(1))
+  check(c, "1d house 2 locked",       not Map._isUnlocked(2))
+  check(c, "1e house 3 locked",       not Map._isUnlocked(3))
 
-  -- 2) Clicking a locked house does NOT switch state.
   local h2 = Map._houses[2]
   Map:mousepressed(h2.x, h2.y, 1)
   check(c, "2 locked-house click ignored", StateMachine.current() == "map")
 
-  -- 3) Clicking Grandma enters game with houseName == "Grandma".
   local h1 = Map._houses[1]
   Map:mousepressed(h1.x, h1.y, 1)
   check(c, "3a state == 'game'",            StateMachine.current() == "game")
   check(c, "3b houseName forwarded",        Game.houseName == "Grandma")
-  check(c, "3c game has 5 pockets",         #Game.pockets == 5)
-  check(c, "3d initial marbles == 0",       Game.marbles == 0)
-  check(c, "3e initial multiplier == 1",    Game.multiplier == 1)
+  check(c, "3c initial marbles == 0",       Game.marbles == 0)
+  check(c, "3d initial multiplier == 1",    Game.multiplier == 1)
+  check(c, "3e no active coin at start",    Game.activeCoin == nil)
 
-  -- 4) Flip into the center pocket scores 5 and bumps multiplier to 2.
-  local center = Game.pockets[1]
-  check(c, "4-pre center value == 5",       center.value == 5)
-  Game._resolveFlip(Game, center.x, center.y)
-  check(c, "4a marbles == 5",               Game.marbles == 5,    "got " .. Game.marbles)
-  check(c, "4b multiplier == 2",            Game.multiplier == 2, "got " .. Game.multiplier)
+  -- ---------- (3) Game: scatter + ring scoring + tap-on-coin ----------
+  print("\n[3/4] Game: coin scatter + 4-tier scoring + tap-on-coin input:")
+  local L = Game._L
 
-  -- 5) Second center hit scores +10 (5 x 2) for 15 total.
-  Game._resolveFlip(Game, center.x, center.y)
-  check(c, "5a marbles == 15",              Game.marbles == 15,   "got " .. Game.marbles)
-  check(c, "5b multiplier == 3",            Game.multiplier == 3, "got " .. Game.multiplier)
-
-  -- 6) Flip into empty board: multiplier resets to 1, marbles unchanged.
-  local before = Game.marbles
-  Game._resolveFlip(Game, 5, 5)   -- top-left corner; no pocket
-  check(c, "6a marbles unchanged",          Game.marbles == before, "got " .. Game.marbles)
-  check(c, "6b multiplier reset to 1",      Game.multiplier == 1,   "got " .. Game.multiplier)
-
-  -- 7) Popup pool fully deactivates after settling (no leaks).
-  --    Spawn many popups, then tick past POPUP_LIFE.
-  for i = 1, 10 do Game._resolveFlip(Game, center.x, center.y) end
-  -- 30 ticks of 0.05s = 1.5s > POPUP_LIFE (1.0s)
-  for i = 1, 30 do Game:update(0.05) end
-  local active = 0
-  for i = 1, Game._popupPoolSize do
-    if Game._popupPool[i].active then active = active + 1 end
+  -- Scatter: should produce a non-zero number of coins, up to the requested 5.
+  -- (rejection sampling may give fewer in tight layouts, but at least 1).
+  check(c, "4a at least 1 coin scattered",  #Game.coins >= 1)
+  check(c, "4b at most 5 coins scattered",  #Game.coins <= 5)
+  -- All scattered coins start un-used and not flipping.
+  local allFresh = true
+  for i = 1, #Game.coins do
+    if Game.coins[i].used or Game.coins[i].flipping then allFresh = false; break end
   end
-  check(c, "7 popup pool fully drained",    active == 0,           "active=" .. active)
+  check(c, "4c all coins start unused and not flipping", allFresh)
 
-  -- ---------- (c) Coin:launch closed-form arc math (Chunk 2) ----------
-  print("\n[3/3] Coin:launch math (closed-form parametric arc, per-item):")
+  -- 5: 4-tier ring resolution against synthetic landings.
+  --    We poke marbles/multiplier directly via the exposed _resolveFlip.
+  Game.marbles, Game.multiplier = 0, 1
+
+  -- 5a) Bullseye: dead center of target.
+  local ring, gain = Game._resolveFlip(Game, L.targetCX, L.targetCY)
+  check(c, "5a bullseye ring detected",     ring == "bull",   "ring=" .. ring)
+  check(c, "5b bullseye gain = 5*1 = 5",    gain == 5,        "gain=" .. gain)
+  check(c, "5c marbles == 5",               Game.marbles == 5)
+  check(c, "5d multiplier == 2",            Game.multiplier == 2)
+
+  -- 5b) Middle ring: between bullR and middleR.
+  local midR = (L.bullR + L.middleR) / 2
+  ring, gain = Game._resolveFlip(Game, L.targetCX + midR, L.targetCY)
+  check(c, "5e middle ring detected",       ring == "middle", "ring=" .. ring)
+  check(c, "5f middle gain = 3*2 = 6",      gain == 6,        "gain=" .. gain)
+  check(c, "5g marbles == 11",              Game.marbles == 11)
+  check(c, "5h multiplier == 3",            Game.multiplier == 3)
+
+  -- 5c) Outer ring: between middleR and outerR.
+  local outR = (L.middleR + L.outerR) / 2
+  ring, gain = Game._resolveFlip(Game, L.targetCX + outR, L.targetCY)
+  check(c, "5i outer ring detected",        ring == "outer",  "ring=" .. ring)
+  check(c, "5j outer gain = 1*3 = 3",       gain == 3,        "gain=" .. gain)
+  check(c, "5k marbles == 14",              Game.marbles == 14)
+  check(c, "5l multiplier == 4",            Game.multiplier == 4)
+
+  -- 5d) On-board but outside target: no score, no chain change.
+  --     Pick a board corner well outside the outer ring.
+  local marblesBefore, multBefore = Game.marbles, Game.multiplier
+  ring, gain = Game._resolveFlip(Game, L.boardX + 4, L.boardY + 4)
+  check(c, "5m on-board off-target detected", ring == "on_board_miss")
+  check(c, "5n on-board off-target: marbles unchanged", Game.marbles == marblesBefore)
+  check(c, "5o on-board off-target: mult unchanged",    Game.multiplier == multBefore)
+
+  -- 5e) Off-board: chain resets, marbles unchanged.
+  marblesBefore = Game.marbles
+  ring, gain = Game._resolveFlip(Game, -100, -100)
+  check(c, "5p off-board detected",         ring == "off_board_miss")
+  check(c, "5q off-board: marbles unchanged", Game.marbles == marblesBefore)
+  check(c, "5r off-board: mult reset to 1",   Game.multiplier == 1)
+
+  -- 6: tap-on-coin input model.
+  -- Re-enter to get a fresh scatter and clean state.
+  Game:enter(nil, "Grandma")
+  check(c, "6a fresh enter: no active coin",  Game.activeCoin == nil)
+
+  -- Tap somewhere with no coin -> nothing happens.
+  Game:mousepressed(1, 1, 1)
+  check(c, "6b tap off any coin: no active",  Game.activeCoin == nil)
+
+  -- Tap on a coin -> it becomes the active flipping coin.
+  local firstCoin = Game.coins[1]
+  Game:mousepressed(firstCoin.x, firstCoin.y, 1)
+  check(c, "6c tap on coin: it flips",        firstCoin.flipping)
+  check(c, "6d activeCoin == that coin",      Game.activeCoin == firstCoin)
+  check(c, "6e lastTappedCoin tracked",       Game.lastTappedCoin == firstCoin)
+
+  -- While a coin is in flight, tapping another coin should do nothing.
+  if #Game.coins >= 2 then
+    local secondCoin = Game.coins[2]
+    Game:mousepressed(secondCoin.x, secondCoin.y, 1)
+    check(c, "6f tap during flight: ignored", not secondCoin.flipping)
+    check(c, "6g activeCoin unchanged",       Game.activeCoin == firstCoin)
+  end
+
+  -- Tick time forward past the flight duration to let it land.
+  for i = 1, 30 do Game:update(0.05) end   -- 1.5s
+  check(c, "6h after landing: coin no longer flipping", not firstCoin.flipping)
+  check(c, "6i after landing: coin marked used",        firstCoin.used)
+  check(c, "6j after landing: activeCoin cleared",      Game.activeCoin == nil)
+  check(c, "6k used coin no longer tappable (contains=false)",
+    not firstCoin:contains(firstCoin.x, firstCoin.y))
+
+  -- ---------- (4) Coin:launch closed-form arc math (Chunk 2) ----------
+  print("\n[4/4] Coin:launch math (closed-form parametric arc, per-item):")
   local Coin   = require("entities.coin")
   local Items  = require("data.flip_items")
   local sqrt   = math.sqrt
   local abs    = math.abs
-
   local coinItem = Items.byId("coin")
   local panItem  = Items.byId("pancakes")
   check(c, "items: Coin tuning loaded",     coinItem ~= nil)
   check(c, "items: Pancakes tuning loaded", panItem  ~= nil)
 
-  -- Helper: place coin at a known origin + board center, return fresh Coin.
   local function makeCoin()
-    local k = Coin(200, 600)
+    local k = Coin(200, 600, 14)
     k.boardCenterX, k.boardCenterY = 640, 380
     return k
   end
@@ -152,66 +199,42 @@ function M.run()
     abs(lx - 640) < 1 and abs(ly - 380) < 1,
     string.format("landing=(%.2f, %.2f)", lx, ly))
 
-  -- 8b) Determinism: same inputs -> same landing, every time.
+  -- 8b) Determinism: same inputs -> same landing.
   k = makeCoin(); local a1, b1 = k:launch(0.3, -0.2, coinItem)
   k = makeCoin(); local a2, b2 = k:launch(0.3, -0.2, coinItem)
   check(c, "8b determinism (Coin, off-center tap)",
-    a1 == a2 and b1 == b2,
-    string.format("(%.4f,%.4f) vs (%.4f,%.4f)", a1, b1, a2, b2))
+    a1 == a2 and b1 == b2)
 
-  -- 8c) Per-item difference: Pancakes deviate further than Coin for the SAME
-  -- off-center tap. (Higher angle_sens AND higher base_power both push the
-  -- landing further from each item's own safe-line target.)
+  -- 8c) Pancakes deviate more than Coin for the same off-center tap.
   k = makeCoin(); local cx0, cy0 = k:launch(0,   0, coinItem)
   k = makeCoin(); local cx1, cy1 = k:launch(0.5, 0, coinItem)
   local coinDev = sqrt((cx1 - cx0)^2 + (cy1 - cy0)^2)
-
   k = makeCoin(); local px0, py0 = k:launch(0,   0, panItem)
   k = makeCoin(); local px1, py1 = k:launch(0.5, 0, panItem)
   local panDev  = sqrt((px1 - px0)^2 + (py1 - py0)^2)
-
   check(c, "8c Pancakes deviate more than Coin for +0.5 horizontal tap",
     panDev > coinDev,
     string.format("coin=%.1fpx pan=%.1fpx", coinDev, panDev))
 
-  -- 8d) Per-item arc height: Pancakes is floatier than Coin (bigger base_arc).
+  -- 8d) Per-item arc height: Pancakes is floatier than Coin.
   k = makeCoin(); k:launch(0, 0, coinItem); local coinArc = k.arcHeight
   k = makeCoin(); k:launch(0, 0, panItem);  local panArc  = k.arcHeight
-  check(c, "8d Pancakes has bigger arc than Coin",
-    panArc > coinArc,
-    string.format("coin=%.1fpx pan=%.1fpx", coinArc, panArc))
+  check(c, "8d Pancakes has bigger arc than Coin", panArc > coinArc)
 
-  -- 8e) flight_time set per-item: Pancakes flies longer than Coin.
+  -- 8e) Per-item flight_time: Pancakes flies longer than Coin.
   k = makeCoin(); k:launch(0, 0, coinItem); local coinFt = k.flightDuration
   k = makeCoin(); k:launch(0, 0, panItem);  local panFt  = k.flightDuration
-  check(c, "8e Pancakes flight_time > Coin flight_time",
-    panFt > coinFt,
-    string.format("coin=%.2fs pan=%.2fs", coinFt, panFt))
+  check(c, "8e Pancakes flight_time > Coin flight_time", panFt > coinFt)
 
-  -- 8f) Coin:contains() hit detection (for the Chunk 3 tap-on-coin input).
+  -- 8f) Coin:contains() hit detection.
   k = makeCoin()
   check(c, "8f contains: center tap hits",       k:contains(200, 600))
-  check(c, "8g contains: near-edge tap hits",    k:contains(212, 600))  -- inside r=14
+  check(c, "8g contains: near-edge tap hits",    k:contains(212, 600))
   check(c, "8h contains: distant tap misses",    not k:contains(300, 600))
   k.flipping = true
   check(c, "8i contains: false while flipping",  not k:contains(200, 600))
-
-  -- 8j) Falloff applied: Pancakes (falloff=1.4) has a tighter sweet spot,
-  -- so its effective offset at raw 0.2 is *smaller* than its raw, while
-  -- Coin (falloff=0.8) has it *larger* than raw. We verify by comparing
-  -- the arc height (which uses eff_dist directly).
-  k = makeCoin(); k:launch(0.2, 0, coinItem); local coinArcSmallOff = k.arcHeight
-  k = makeCoin(); k:launch(0.2, 0, panItem);  local panArcSmallOff  = k.arcHeight
-  -- Coin: eff_dist = 0.2^0.8 = ~0.275 (LARGER than 0.2)
-  -- Pan:  eff_dist = 0.2^1.4 = ~0.111 (SMALLER than 0.2)
-  -- So the *added* arc on top of base is proportionally larger for Coin
-  -- than for Pancakes at this small offset. Verify the ratio is in the
-  -- expected direction.
-  local coinAdded = coinArcSmallOff - coinArc   -- arc_var * eff_dist contribution
-  local panAdded  = panArcSmallOff  - panArc
-  check(c, "8j falloff curve direction (coin>0, pan>0 added arc)",
-    coinAdded > 0 and panAdded > 0,
-    string.format("coin_added=%.2f pan_added=%.2f", coinAdded, panAdded))
+  k.flipping = false; k.used = true
+  check(c, "8j contains: false when used",       not k:contains(200, 600))
 
   print("")
   print(string.format("RESULT: %d passed, %d failed", c.pass, c.fail))

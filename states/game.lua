@@ -1,90 +1,178 @@
 -- states/game.lua
--- The flip board. One Coin, five Floor-1 pockets, arc-flip, multiplier chain,
--- score-popup object pool, HUD. Click on the board = aim the flip.
--- Keys: [M] back to map, [R] reset the run, [Esc] quit (routed in main.lua).
+-- The flip board, rebuilt per docs/FLIP_BOARD_VISUAL_SPEC.md.
 --
--- Pocket setup is data-driven (see buildPockets) so "add a pocket" or
--- "fatten a pocket" is a one-liner -- that's the card/stage lever.
--- Pocket VALUES are tight (5 / 3 / 2). Big numbers come from the multiplier
--- chain, not zone values. (Balatro lesson, see CLAUDE.md.)
+-- Portrait layout, light grey background, white board rectangle filling
+-- everything below a top HUD strip. One target (3 concentric rings) in the
+-- upper half of the board. Multiple coins scattered on the board at floor
+-- start; tap an un-used coin to flip it (closed-form arc per the physics
+-- spec). Only one coin flies at a time. A hand sprite renders behind the
+-- most-recently-tapped coin, from the nearest screen edge.
+--
+-- Scoring is 4-tier: bullseye / middle ring / outer ring (graze) / off-board
+-- (full miss + chain reset). On-board-but-outside-target is a no-op (no
+-- score, no chain change) -- effectively a "wasted shot."
+--
+-- NO JUICE in this chunk: no score popups, no ring flash, no screen shake,
+-- no multiplier bounce, no between-floor shrink. Those land in Chunk 4.
 
 local StateMachine = require("statemachine")
 local Coin         = require("entities.coin")
-local Pocket       = require("entities.pocket")
+local Items        = require("data.flip_items")
 
-local lg = love.graphics
+local lg    = love.graphics
+local sqrt  = math.sqrt
+local min   = math.min
+local max   = math.max
 
 local Game = {}
 
--- ---------- Score popup pool (pre-allocated; NEVER allocate in update/draw) ----------
+-- ---------- Visual spec colors ----------
 
-local POPUP_POOL_SIZE = 24
-local POPUP_LIFE      = 1.0
-local POPUP_RISE      = 32     -- pixels/sec upward
-local popupPool       = {}
-for i = 1, POPUP_POOL_SIZE do
-  popupPool[i] = { active = false, x = 0, y = 0, text = "", life = 0 }
+local COLOR_BG             = { 0xEE/255, 0xEE/255, 0xEE/255 }
+local COLOR_BOARD          = { 1, 1, 1 }
+local COLOR_BOARD_BORDER   = { 0xAA/255, 0xAA/255, 0xAA/255 }
+local COLOR_BULL           = { 0xE8/255, 0x47/255, 0x3F/255 }
+local COLOR_MIDDLE         = { 0xF5/255, 0xA6/255, 0x23/255 }
+local COLOR_OUTER          = { 0x5D/255, 0xB3/255, 0x5D/255 }
+local COLOR_TARGET_OUTLINE = { 0x33/255, 0x33/255, 0x33/255 }
+local COLOR_HAND           = { 0xFD/255, 0xBC/255, 0xB4/255 }
+local COLOR_TEXT           = { 0.10, 0.10, 0.10 }
+local COLOR_TEXT_DIM       = { 0.40, 0.40, 0.40 }
+
+-- ---------- Tunables ----------
+
+local COINS_PER_FLOOR = 5
+local COIN_RADIUS_AT_390W = 24                  -- spec: 48px DIAMETER at 390w
+local FLOOR_THRESHOLDS = { [1] = 20, [2] = 60, [3] = 120 }
+
+-- Tight per Balatro lesson; the big numbers come from the multiplier chain.
+local POINTS = { bull = 5, middle = 3, outer = 1 }
+
+local HUD_HEIGHT       = 96
+local BOARD_MARGIN     = 16
+local TARGET_MARGIN_FRAC = 0.18   -- white space between target edge and board edge
+local TARGET_CENTER_Y_FRAC = 0.32 -- target in upper half of board
+
+-- ---------- Layout (rebuilt on enter / resize) ----------
+
+local L = {}
+
+local function rebuildLayout()
+  L.W, L.H = lg.getWidth(), lg.getHeight()
+  L.hudH = HUD_HEIGHT
+  L.boardX = BOARD_MARGIN
+  L.boardY = L.hudH + BOARD_MARGIN
+  L.boardW = L.W - 2 * BOARD_MARGIN
+  L.boardH = L.H - L.boardY - BOARD_MARGIN
+
+  -- Target circle in the upper portion of the board.
+  L.targetCX = L.boardX + L.boardW / 2
+  L.targetCY = L.boardY + L.boardH * TARGET_CENTER_Y_FRAC
+  local margin = L.boardW * TARGET_MARGIN_FRAC
+  L.outerR  = (L.boardW / 2) - margin
+  L.middleR = L.outerR * 0.66
+  L.bullR   = L.outerR * 0.33
+
+  -- Coin size scales with screen width (spec calibrated at 390w).
+  L.coinR = COIN_RADIUS_AT_390W * (L.W / 390)
 end
 
-local function spawnPopup(x, y, text)
-  for i = 1, POPUP_POOL_SIZE do
-    local p = popupPool[i]
-    if not p.active then
-      p.active = true
-      p.x      = x
-      p.y      = y
-      p.text   = text
-      p.life   = POPUP_LIFE
-      return p
+-- ---------- Coin scatter ----------
+
+local function scatterCoins(n, item)
+  local coins = {}
+  local minSpacing = L.coinR * 2 + 12
+  local maxAttempts = 60
+  for i = 1, n do
+    local placed = false
+    for attempt = 1, maxAttempts do
+      local x = love.math.random(L.boardX + L.coinR, L.boardX + L.boardW - L.coinR)
+      local y = love.math.random(L.boardY + L.coinR, L.boardY + L.boardH - L.coinR)
+      local ok = true
+      for j = 1, #coins do
+        local c = coins[j]
+        local dx = x - c.x
+        local dy = y - c.y
+        if (dx * dx + dy * dy) < (minSpacing * minSpacing) then ok = false; break end
+      end
+      if ok then
+        local coin = Coin(x, y, L.coinR)
+        coin.boardCenterX = L.targetCX
+        coin.boardCenterY = L.targetCY
+        coins[#coins + 1] = coin
+        placed = true
+        break
+      end
     end
+    if not placed then break end  -- give up if we can't fit more
   end
-  -- Pool exhausted: drop silently. NEVER allocate a new one here.
+  return coins
 end
 
-local function updatePopups(dt)
-  for i = 1, POPUP_POOL_SIZE do
-    local p = popupPool[i]
-    if p.active then
-      p.life = p.life - dt
-      p.y    = p.y - POPUP_RISE * dt
-      if p.life <= 0 then p.active = false end
-    end
+-- ---------- Hand sprite (nearest edge to a given coin) ----------
+
+local function drawHandFor(coin)
+  if not coin then return end
+  local W, H = L.W, L.H
+  local cx, cy = coin.x, coin.y
+  -- z'd up coins still get the hand drawn at their ground position
+  local dTop, dBot, dLeft, dRight = cy, H - cy, cx, W - cx
+  local mind = min(dTop, dBot, dLeft, dRight)
+
+  local handLen   = L.coinR * 3.5
+  local handThick = L.coinR * 1.4
+
+  lg.setColor(COLOR_HAND)
+  if mind == dTop then
+    lg.rectangle("fill", cx - handThick/2, 0, handThick, handLen, 16, 16)
+  elseif mind == dBot then
+    lg.rectangle("fill", cx - handThick/2, H - handLen, handThick, handLen, 16, 16)
+  elseif mind == dLeft then
+    lg.rectangle("fill", 0, cy - handThick/2, handLen, handThick, 16, 16)
+  else
+    lg.rectangle("fill", W - handLen, cy - handThick/2, handLen, handThick, 16, 16)
   end
+  lg.setColor(1, 1, 1, 1)
 end
 
-local function drawPopups()
-  for i = 1, POPUP_POOL_SIZE do
-    local p = popupPool[i]
-    if p.active then
-      local alpha = p.life / POPUP_LIFE
-      lg.setColor(1, 0.95, 0.35, alpha)
-      lg.printf(p.text, p.x - 60, p.y, 120, "center")
-    end
+-- ---------- Flip resolution ----------
+
+-- 4-tier landing resolution. Pure logic; exposed as Game._resolveFlip for tests.
+local function resolveFlip(self, landingX, landingY)
+  local dx = landingX - L.targetCX
+  local dy = landingY - L.targetCY
+  local d2 = dx * dx + dy * dy
+
+  if d2 <= L.bullR * L.bullR then
+    local gain = POINTS.bull * self.multiplier
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "bull", gain
+  elseif d2 <= L.middleR * L.middleR then
+    local gain = POINTS.middle * self.multiplier
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "middle", gain
+  elseif d2 <= L.outerR * L.outerR then
+    local gain = POINTS.outer * self.multiplier
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "outer", gain
   end
-  lg.setColor(1, 1, 1)
-end
 
-local function resetPopupPool()
-  for i = 1, POPUP_POOL_SIZE do
-    popupPool[i].active = false
+  -- Outside the target. Is it still on the board?
+  local onBoard =
+    landingX >= L.boardX and landingX <= L.boardX + L.boardW and
+    landingY >= L.boardY and landingY <= L.boardY + L.boardH
+
+  if onBoard then
+    -- Wasted shot: no points, no chain change. Survivable.
+    return "on_board_miss", 0
+  else
+    -- Full miss: chain resets, no points.
+    self.multiplier = 1
+    return "off_board_miss", 0
   end
-end
-
--- ---------- Pocket layout (data-driven, parameterizable by floor) ----------
-
--- floor: 1..3. Floors 2-3 reuse the layout at smaller radii (per GDD).
-local function buildPockets(floor)
-  local scale = 1 - (floor - 1) * 0.18      -- floor 1=1.00, 2=0.82, 3=0.64
-  local cx, cy = 640, 380
-  local pockets = {}
-  -- center: highest single-pocket value, but only 5 (not 10x the others)
-  pockets[#pockets + 1] = Pocket(cx,       cy,       48 * scale, 5)
-  -- four outer pockets, values 3/3/2/2 -- chain mult does the heavy lifting
-  pockets[#pockets + 1] = Pocket(cx - 180, cy - 70,  40 * scale, 3)
-  pockets[#pockets + 1] = Pocket(cx + 180, cy - 70,  40 * scale, 3)
-  pockets[#pockets + 1] = Pocket(cx - 180, cy + 70,  40 * scale, 2)
-  pockets[#pockets + 1] = Pocket(cx + 180, cy + 70,  40 * scale, 2)
-  return pockets
 end
 
 -- ---------- State lifecycle ----------
@@ -92,69 +180,104 @@ end
 function Game:enter(prev, houseName)
   self.houseName  = houseName or "?"
   self.floor      = 1
-  self.pockets    = buildPockets(self.floor)
-  -- Coin starts at lower edge ("hand reaching in from the screen edge").
-  self.coin       = Coin(160, 640)
   self.marbles    = 0
   self.multiplier = 1
-  resetPopupPool()
+
+  rebuildLayout()
+
+  -- Prototype: every coin in the scatter is the same item (Coin). Future:
+  -- per-floor item assignment, varied per scatter spot.
+  self.activeCoinItem = Items.byId("coin")
+  self.coins          = scatterCoins(COINS_PER_FLOOR, self.activeCoinItem)
+  self.activeCoin     = nil  -- the one currently in flight, or nil
+  self.lastTappedCoin = self.coins[1]   -- where the hand points before any tap
 end
 
 function Game:exit() end
 
 function Game:update(dt)
-  self.coin:update(dt)
-  for i = 1, #self.pockets do
-    self.pockets[i]:update(dt)
+  for i = 1, #self.coins do self.coins[i]:update(dt) end
+  if self.activeCoin and not self.activeCoin.flipping then
+    self.activeCoin = nil
   end
-  updatePopups(dt)
 end
 
 function Game:draw()
-  lg.setColor(0.18, 0.20, 0.24)
-  lg.rectangle("fill", 0, 0, lg.getWidth(), lg.getHeight())
-  for i = 1, #self.pockets do
-    self.pockets[i]:draw()
-  end
-  self.coin:draw()
-  -- HUD
-  lg.setColor(1, 1, 1)
-  lg.print("HOUSE:  " .. self.houseName,        16, 16)
-  lg.print("FLOOR:  " .. self.floor,            16, 36)
-  lg.print("MARBLES: " .. self.marbles,         16, 56)
-  lg.print("MULT:    x" .. self.multiplier,     16, 76)
-  lg.print("[click] flip   [R] reset   [M] map   [Esc] quit", 16, lg.getHeight() - 24)
-  drawPopups()
-end
+  -- Background.
+  lg.setColor(COLOR_BG)
+  lg.rectangle("fill", 0, 0, L.W, L.H)
 
--- ---------- Flip resolution ----------
+  -- HUD strip.
+  lg.setColor(COLOR_TEXT)
+  lg.print("MARBLES  " .. self.marbles, 20, 22)
+  local multStr = "MULT  x" .. self.multiplier
+  local font = lg.getFont()
+  lg.print(multStr, L.W - font:getWidth(multStr) - 20, 22)
+  -- Floor threshold (secondary).
+  lg.setColor(COLOR_TEXT_DIM)
+  local threshStr = "FLOOR " .. self.floor .. "   NEED " .. (FLOOR_THRESHOLDS[self.floor] or "?")
+  lg.printf(threshStr, 0, 52, L.W, "center")
 
--- Pure logic. Exposed for tests via Game._resolveFlip.
-local function resolveFlip(self, x, y)
-  for i = 1, #self.pockets do
-    local pkt = self.pockets[i]
-    if pkt:contains(x, y) then
-      pkt:flash()
-      local gain = pkt.value * self.multiplier
-      self.marbles    = self.marbles + gain
-      self.multiplier = self.multiplier + 1
-      spawnPopup(x, y - 30, "+" .. gain)
-      return "hit", gain
+  -- Board rectangle.
+  lg.setColor(COLOR_BOARD)
+  lg.rectangle("fill", L.boardX, L.boardY, L.boardW, L.boardH)
+  lg.setColor(COLOR_BOARD_BORDER)
+  lg.setLineWidth(2)
+  lg.rectangle("line", L.boardX, L.boardY, L.boardW, L.boardH)
+
+  -- Target rings (outer first so inner sit on top -- flat fills, no
+  -- per-ring outline -- a single outer outline goes on last).
+  lg.setColor(COLOR_OUTER)
+  lg.circle("fill", L.targetCX, L.targetCY, L.outerR)
+  lg.setColor(COLOR_MIDDLE)
+  lg.circle("fill", L.targetCX, L.targetCY, L.middleR)
+  lg.setColor(COLOR_BULL)
+  lg.circle("fill", L.targetCX, L.targetCY, L.bullR)
+  lg.setColor(COLOR_TARGET_OUTLINE)
+  lg.setLineWidth(2)
+  lg.circle("line", L.targetCX, L.targetCY, L.outerR)
+
+  -- Hand sprite: behind the most-recently-tapped (or about-to-be-tapped) coin.
+  local handCoin = self.activeCoin or self.lastTappedCoin
+  if handCoin and not handCoin.used then
+    drawHandFor(handCoin)
+  elseif handCoin and handCoin.used then
+    -- Find next unused coin to point at.
+    for i = 1, #self.coins do
+      if not self.coins[i].used then drawHandFor(self.coins[i]); break end
     end
   end
-  -- Miss: landed in empty board. Multiplier resets to 1. Marbles unchanged.
-  self.multiplier = 1
-  spawnPopup(x, y - 30, "MISS")
-  return "miss", 0
+
+  -- Coins.
+  for i = 1, #self.coins do self.coins[i]:draw() end
+
+  -- Bottom hint (temporary; replaced when the run/shop flow lands).
+  lg.setColor(COLOR_TEXT_DIM)
+  lg.printf("HOUSE: " .. self.houseName .. "   [M] map   [R] reset   [Esc] quit",
+    0, L.H - 24, L.W, "center")
+  lg.setColor(1, 1, 1, 1)
 end
+
+-- ---------- Input ----------
 
 function Game:mousepressed(x, y, button)
   if button ~= 1 then return end
-  if self.coin.flipping then return end
-  local game = self
-  self.coin:flipTo(x, y, function(lx, ly)
-    resolveFlip(game, lx, ly)
-  end)
+  if self.activeCoin then return end                 -- one flip at a time
+  for i = 1, #self.coins do
+    local coin = self.coins[i]
+    if coin:contains(x, y) then
+      local offX = (x - coin.x) / coin.radius
+      local offY = (y - coin.y) / coin.radius
+      local game = self
+      coin:launch(offX, offY, self.activeCoinItem, function(lx, ly)
+        resolveFlip(game, lx, ly)
+        coin.used = true
+      end)
+      self.activeCoin     = coin
+      self.lastTappedCoin = coin
+      return
+    end
+  end
 end
 
 function Game:keypressed(k)
@@ -167,9 +290,7 @@ end
 
 -- ---------- Test hooks ----------
 
-Game._popupPool       = popupPool
-Game._popupPoolSize   = POPUP_POOL_SIZE
-Game._resolveFlip     = resolveFlip
-Game._buildPockets    = buildPockets
+Game._resolveFlip = resolveFlip
+Game._L           = L  -- layout table (read after enter())
 
 return Game
