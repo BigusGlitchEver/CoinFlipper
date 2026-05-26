@@ -48,10 +48,13 @@ local FLOOR_THRESHOLDS = { [1] = 20, [2] = 60, [3] = 120 }
 -- Tight per Balatro lesson; the big numbers come from the multiplier chain.
 local POINTS = { bull = 5, middle = 3, outer = 1 }
 
-local HUD_HEIGHT       = 96
+local HUD_HEIGHT       = 64
 local BOARD_MARGIN     = 16
-local TARGET_MARGIN_FRAC = 0.18   -- white space between target edge and board edge
-local TARGET_CENTER_Y_FRAC = 0.32 -- target in upper half of board
+-- Per FIX prompt: outer radius <= 18% of board's shortest dim. On 800x600
+-- with this layout that's ~85px max; we pick 65px (in spec's 60-70 range)
+-- so the target genuinely feels missable.
+local TARGET_OUTER_R   = 65
+local TARGET_CENTER_Y_FRAC = 0.40   -- target somewhat above middle, room for coin scatter below
 
 -- ---------- Layout (rebuilt on enter / resize) ----------
 
@@ -68,13 +71,13 @@ local function rebuildLayout()
   -- Target circle in the upper portion of the board.
   L.targetCX = L.boardX + L.boardW / 2
   L.targetCY = L.boardY + L.boardH * TARGET_CENTER_Y_FRAC
-  local margin = L.boardW * TARGET_MARGIN_FRAC
-  L.outerR  = (L.boardW / 2) - margin
+  L.outerR  = TARGET_OUTER_R
   L.middleR = L.outerR * 0.66
   L.bullR   = L.outerR * 0.33
 
-  -- Coin size scales with screen width (spec calibrated at 390w).
-  L.coinR = COIN_RADIUS_AT_390W * (L.W / 390)
+  -- Coin size: use the spec value (48px diameter) directly. Coins are
+  -- intentionally larger than the target -- tappable, not aim-able.
+  L.coinR = COIN_RADIUS_AT_390W
 end
 
 -- ---------- Coin scatter ----------

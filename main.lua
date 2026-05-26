@@ -20,6 +20,8 @@ function love.load(arg)
     end
   end
 
+  -- Fix 1: lock window to 800x600 so it fits on a standard laptop screen.
+  love.window.setMode(800, 600, { resizable = false })
   love.window.setTitle("Coin Flipper")
   love.graphics.setBackgroundColor(0.10, 0.12, 0.16)
 

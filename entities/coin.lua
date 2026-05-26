@@ -64,45 +64,53 @@ function Coin:contains(px, py)
   return (dx * dx + dy * dy) <= (self.radius * self.radius)
 end
 
--- Launch with a normalized tap offset and per-item tuning. Closed-form
--- parametric arc per docs/FLIP_PHYSICS_SPEC.md.
+-- Launch with a normalized tap offset and per-item tuning.
+-- PIXEL-BASED closed-form parametric arc per the FIX prompt + FLIP_PHYSICS_SPEC.
 --
 --   offX, offY : tap relative to coin center, normalized to coin.radius
 --                (each roughly in [-1, 1]; clamped to unit disc here)
---   item       : per-item tuning table (data/flip_items.lua)
+--   item       : per-item tuning table (data/flip_items.lua), in PIXELS
 --   callback   : invoked once when the coin lands; receives (landingX, landingY)
 --
--- Returns (landingX, landingY) immediately. The animation only interpolates --
--- tumble/spin is cosmetic and CANNOT alter the landing. Same tap = same landing.
+-- Returns (landingX, landingY) immediately at launch time. The animation only
+-- interpolates -- tumble/spin is cosmetic and CANNOT alter the landing.
+-- Same tap = same landing, deterministic.
+--
+-- Model:
+--   base_angle   = atan2 from coin -> target center  ("safe line")
+--   launch_angle = base_angle + offset_x * angle_sensitivity
+--   launch_power = base_power + offset_y * power_sensitivity     (PIXELS)
+--   arc_height   = base_arc + offset_dist * arc_variance          (PIXELS)
+--   landing      = coin + (cos(launch_angle), sin(launch_angle)) * launch_power
 function Coin:launch(offX, offY, item, callback)
+  -- Clamp tap to the unit disc.
   local raw_dist = sqrt(offX * offX + offY * offY)
   if raw_dist > 1 then
     local s = 1 / raw_dist
     offX, offY, raw_dist = offX * s, offY * s, 1
   end
 
-  local falloff  = item.falloff or 1
-  local eff_dist = raw_dist ^ falloff
-  local k = (raw_dist > 0) and (eff_dist / raw_dist) or 0
-  local eff_x = offX * k
-  local eff_y = offY * k
-
+  -- Safe line: from coin toward the target center.
   local dxc = self.boardCenterX - self.x
   local dyc = self.boardCenterY - self.y
-  local center_dist = sqrt(dxc * dxc + dyc * dyc)
-  if center_dist < 1 then center_dist = 1 end
   local base_angle = atan2(dyc, dxc)
 
-  local launch_angle = base_angle + eff_x * (item.angle_sens or 0.20)
-  local power_units  = (item.base_power or 1.0) + eff_y * (item.power_sens or 0.15)
-  local launch_dist  = power_units * center_dist
+  -- Pixel-based launch parameters (no board-units scaling).
+  local angle_sens = item.angle_sensitivity or 0.35
+  local power_sens = item.power_sensitivity or 40
+  local base_power = item.base_power or 220
+  local base_arc   = item.base_arc or 80
+  local arc_var    = item.arc_variance or 30
 
-  local arc_units  = (item.base_arc or 0.30) + eff_dist * (item.arc_var or 0.10)
-  local arc_pixels = arc_units * center_dist
+  local launch_angle = base_angle + offX * angle_sens
+  local launch_power = base_power + offY * power_sens
+  local arc_pixels   = base_arc + raw_dist * arc_var
 
-  local lx = self.x + cos(launch_angle) * launch_dist
-  local ly = self.y + sin(launch_angle) * launch_dist
+  -- Compute landing immediately (deterministic).
+  local lx = self.x + cos(launch_angle) * launch_power
+  local ly = self.y + sin(launch_angle) * launch_power
 
+  -- Stash for the animation; the visual cannot change the result.
   self.startX         = self.x
   self.startY         = self.y
   self.targetX        = lx

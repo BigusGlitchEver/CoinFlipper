@@ -175,11 +175,14 @@ function M.run()
   check(c, "6k used coin no longer tappable (contains=false)",
     not firstCoin:contains(firstCoin.x, firstCoin.y))
 
-  -- ---------- (4) Coin:launch closed-form arc math (Chunk 2) ----------
-  print("\n[4/4] Coin:launch math (closed-form parametric arc, per-item):")
+  -- ---------- (4) Coin:launch pixel-based parametric arc math ----------
+  print("\n[4/4] Coin:launch math (pixel-based parametric arc, per-item):")
   local Coin   = require("entities.coin")
   local Items  = require("data.flip_items")
   local sqrt   = math.sqrt
+  local cos    = math.cos
+  local sin    = math.sin
+  local atan2  = math.atan2
   local abs    = math.abs
   local coinItem = Items.byId("coin")
   local panItem  = Items.byId("pancakes")
@@ -192,12 +195,17 @@ function M.run()
     return k
   end
 
-  -- 8a) Dead-center tap with base_power=1.0 lands at the board center.
+  -- 8a) Dead-center tap travels exactly base_power pixels along the safe line.
+  -- Coin at (200, 600), target at (640, 380); base_angle = atan2(-220, 440).
+  -- Expected landing: coin + base_power * (cos, sin)(base_angle).
   local k = makeCoin()
   local lx, ly = k:launch(0, 0, coinItem)
-  check(c, "8a center tap lands at board center",
-    abs(lx - 640) < 1 and abs(ly - 380) < 1,
-    string.format("landing=(%.2f, %.2f)", lx, ly))
+  local baseAngle = atan2(380 - 600, 640 - 200)
+  local expX = 200 + cos(baseAngle) * coinItem.base_power
+  local expY = 600 + sin(baseAngle) * coinItem.base_power
+  check(c, "8a center tap travels base_power pixels along safe line",
+    abs(lx - expX) < 0.01 and abs(ly - expY) < 0.01,
+    string.format("got=(%.2f, %.2f)  expected=(%.2f, %.2f)", lx, ly, expX, expY))
 
   -- 8b) Determinism: same inputs -> same landing.
   k = makeCoin(); local a1, b1 = k:launch(0.3, -0.2, coinItem)
@@ -226,15 +234,25 @@ function M.run()
   k = makeCoin(); k:launch(0, 0, panItem);  local panFt  = k.flightDuration
   check(c, "8e Pancakes flight_time > Coin flight_time", panFt > coinFt)
 
-  -- 8f) Coin:contains() hit detection.
+  -- 8f) offset_y pushes the shot long (positive) or short (negative).
+  k = makeCoin(); local _, _ = k:launch(0,  0,    coinItem); local centerLand = { k.targetX, k.targetY }
+  k = makeCoin();                k:launch(0, -0.5, coinItem); local shortLand  = { k.targetX, k.targetY }
+  k = makeCoin();                k:launch(0,  0.5, coinItem); local longLand   = { k.targetX, k.targetY }
+  -- "Short" should be closer to origin than center; "long" should be farther.
+  local function distFromOrigin(p) return sqrt((p[1] - 200)^2 + (p[2] - 600)^2) end
+  -- power_sensitivity > 0 means +offset_y INCREASES launch_power.
+  check(c, "8f +offset_y travels farther than center", distFromOrigin(longLand)  > distFromOrigin(centerLand))
+  check(c, "8g -offset_y travels shorter than center", distFromOrigin(shortLand) < distFromOrigin(centerLand))
+
+  -- 8h) Coin:contains() hit detection.
   k = makeCoin()
-  check(c, "8f contains: center tap hits",       k:contains(200, 600))
-  check(c, "8g contains: near-edge tap hits",    k:contains(212, 600))
-  check(c, "8h contains: distant tap misses",    not k:contains(300, 600))
+  check(c, "8h contains: center tap hits",       k:contains(200, 600))
+  check(c, "8i contains: near-edge tap hits",    k:contains(212, 600))
+  check(c, "8j contains: distant tap misses",    not k:contains(300, 600))
   k.flipping = true
-  check(c, "8i contains: false while flipping",  not k:contains(200, 600))
+  check(c, "8k contains: false while flipping",  not k:contains(200, 600))
   k.flipping = false; k.used = true
-  check(c, "8j contains: false when used",       not k:contains(200, 600))
+  check(c, "8l contains: false when used",       not k:contains(200, 600))
 
   print("")
   print(string.format("RESULT: %d passed, %d failed", c.pass, c.fail))
