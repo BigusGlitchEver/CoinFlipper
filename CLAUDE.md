@@ -59,6 +59,31 @@ any response logic. The coin's "flip" is faked 3D: an x,y board position plus a
 fake z height driving a vertical draw offset, a shadow, and a scale/squash
 tumble — no animation frames, which suits the hand-drawn-asset pipeline.
 
+## Design docs (read these before touching flip-board code)
+
+- `docs/FLIP_BOARD_FEEL.md` — how the flip board should *feel* and the mental
+  model (tap the **coin**, never a zone; deterministic; per-item personalities;
+  graded punishment up to off-board zero).
+- `docs/FLIP_PHYSICS_SPEC.md` — concrete numbers: closed-form parametric arc,
+  the per-item tuning table, sensitivity falloff, floor-shrink lever.
+
+### Override: prototype target shape
+
+Both docs assume **concentric scoring rings**. The agreed prototype shape is
+simpler — and supersedes the rings in code:
+
+- **Rectangle board** with **one circular scoring zone** inside it.
+- The circle is **mutable**: cards / items / floor effects can grow it, shrink
+  it, or move it. Plan for that from day one (data-driven; size and position
+  are state, not constants).
+- **Three-tier landing resolution**:
+  - Inside the circle → marbles × multiplier, advance the chain
+  - On the rectangle but outside the circle → graze: low/no marbles, chain
+    survives
+  - Off the rectangle entirely → zero, chain resets
+- The closed-form parametric arc, tap-offset input model, and per-item tuning
+  table all apply unchanged.
+
 ## Design principles (from the GDD + reference math)
 
 - **Tight zone values; the multiplier is the source of big numbers.** Per the
@@ -105,12 +130,17 @@ change before calling it done. Also byte-check syntax with `luajit -bl <file>`.
 **Working (this session):** state machine (`statemachine.lua`) + `main.lua`
 routing; neighborhood map (`states/map.lua`) with a cul-de-sac and three houses
 (Grandma playable/red, Cat + Gym Bro locked/grey, conquered = green),
-sequential lock/unlock, click-to-enter passing the house name; flip board
-(`states/game.lua`) with one Coin entity, five Floor-1 pockets, arc-flip
-physics, pocket scoring (center=5, others=3/3/2/2), multiplier chain (hit
-stacks +1, miss resets to 1), score-popup object pool, and a HUD. **M**
-returns to map, **R** resets the run, **Esc** quits. A headless smoke test
-lives at `tests/smoke.lua` and is invoked with `lovec . --test`.
+sequential lock/unlock, click-to-enter passing the house name; an initial
+prototype flip board (`states/game.lua`) with one Coin entity, five discrete
+pockets, click-to-launch arc, multiplier chain, score-popup object pool, HUD.
+**M** returns to map, **R** resets the run, **Esc** quits. A headless smoke
+test lives at `tests/smoke.lua` and is invoked with `lovec . --test`.
+
+**Pending refactor (next chunk):** the flip board needs to be rebuilt to the
+agreed model — rectangle board + single mutable circle, tap-the-coin input
+(not tap-the-zone), closed-form parametric arc with per-item tuning, three-tier
+landing resolution. See the `docs/` files. The current `states/game.lua` is a
+placeholder until that lands.
 
 **Predates this prototype work (preserved, not yet wired into the loop):**
 the buildings manager (`components/buildings/manager.lua`) — conquered-house
