@@ -102,15 +102,27 @@ change before calling it done. Also byte-check syntax with `luajit -bl <file>`.
 
 ## Current state of the build
 
-**Working:** state machine + `main.lua` routing; neighborhood map
-(`states/map.lua`) with a cul-de-sac and three houses (Grandma playable/red,
-Cat + Gym Bro locked/grey, conquered = green), sequential lock/unlock,
-click-to-enter passing the house name; flip board (`states/game.lua`) with one
-Coin entity, five Floor-1 pockets, arc-flip physics, pocket scoring, multiplier
-chain, score-popup object pool, and a HUD. **M** returns to map, **R** resets,
-**Esc** quits.
+**Working (this session):** state machine (`statemachine.lua`) + `main.lua`
+routing; neighborhood map (`states/map.lua`) with a cul-de-sac and three houses
+(Grandma playable/red, Cat + Gym Bro locked/grey, conquered = green),
+sequential lock/unlock, click-to-enter passing the house name; flip board
+(`states/game.lua`) with one Coin entity, five Floor-1 pockets, arc-flip
+physics, pocket scoring (center=5, others=3/3/2/2), multiplier chain (hit
+stacks +1, miss resets to 1), score-popup object pool, and a HUD. **M**
+returns to map, **R** resets the run, **Esc** quits. A headless smoke test
+lives at `tests/smoke.lua` and is invoked with `lovec . --test`.
 
-**Not built yet:** real win/lose flow, floors 2–3 (shrinking pockets), shop,
-Bicycle cards, boss flip + tug-of-war bar, idle/passive Marble layer, the
-Angel/Demon event, the special Marble jackpot, and persistence of the global
-bank across runs.
+**Predates this prototype work (preserved, not yet wired into the loop):**
+the buildings manager (`components/buildings/manager.lua`) — conquered-house
+model with passive income and per-building + district upgrades; the Marble
+bank (`components/marbles/bank.lua`) — global currency with accrue/spend; the
+`services.lua` module that owns both and ticks passive accrual every frame
+(this is the "idle layer plumbing" — UI/exposure to come); data files in
+`data/` (`buildings.lua`, `cards.lua`, `flip_items.lua`) holding GDD reference
+data for the card system and multi-item flipping that aren't in scope yet.
+
+**Not built yet:** real win/lose flow, floors 2–3 (shrinking pockets reusing
+the same layout), shop with the Nerdy Kid, Bicycle card system on top of
+`data/cards.lua`, boss flip + tug-of-war bar, multi-item flipping using
+`data/flip_items.lua`, the Angel/Demon event, the special Marble jackpot,
+and persistence of the global bank across runs.
