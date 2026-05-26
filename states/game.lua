@@ -35,7 +35,8 @@ local COLOR_BULL           = { 0xE8/255, 0x47/255, 0x3F/255 }
 local COLOR_MIDDLE         = { 0xF5/255, 0xA6/255, 0x23/255 }
 local COLOR_OUTER          = { 0x5D/255, 0xB3/255, 0x5D/255 }
 local COLOR_TARGET_OUTLINE = { 0x33/255, 0x33/255, 0x33/255 }
-local COLOR_HAND           = { 0xFD/255, 0xBC/255, 0xB4/255 }
+local COLOR_TOOL           = { 0x9A/255, 0xA0/255, 0xA6/255 }
+local COLOR_TOOL_OUTLINE   = { 0x33/255, 0x33/255, 0x33/255 }
 local COLOR_TEXT           = { 0.10, 0.10, 0.10 }
 local COLOR_TEXT_DIM       = { 0.40, 0.40, 0.40 }
 
@@ -112,29 +113,36 @@ local function scatterCoins(n, item)
   return coins
 end
 
--- ---------- Hand sprite (nearest edge to a given coin) ----------
+-- ---------- Flip tool (round, behind the about-to-flip coin) ----------
 
-local function drawHandFor(coin)
+-- Draws a round metal-grey disc behind the given coin, nudged slightly toward
+-- the nearest screen edge from that coin. Replaces the old skin-toned "hand."
+local function drawToolFor(coin)
   if not coin then return end
   local W, H = L.W, L.H
   local cx, cy = coin.x, coin.y
-  -- z'd up coins still get the hand drawn at their ground position
+  -- z'd up coins still get the tool drawn at their ground position
   local dTop, dBot, dLeft, dRight = cy, H - cy, cx, W - cx
   local mind = min(dTop, dBot, dLeft, dRight)
 
-  local handLen   = L.coinR * 3.5
-  local handThick = L.coinR * 1.4
-
-  lg.setColor(COLOR_HAND)
+  local toolR  = L.coinR * 1.3
+  local offset = L.coinR * 0.5
+  local tx, ty = cx, cy
   if mind == dTop then
-    lg.rectangle("fill", cx - handThick/2, 0, handThick, handLen, 16, 16)
+    ty = cy - offset
   elseif mind == dBot then
-    lg.rectangle("fill", cx - handThick/2, H - handLen, handThick, handLen, 16, 16)
+    ty = cy + offset
   elseif mind == dLeft then
-    lg.rectangle("fill", 0, cy - handThick/2, handLen, handThick, 16, 16)
+    tx = cx - offset
   else
-    lg.rectangle("fill", W - handLen, cy - handThick/2, handLen, handThick, 16, 16)
+    tx = cx + offset
   end
+
+  lg.setColor(COLOR_TOOL)
+  lg.circle("fill", tx, ty, toolR)
+  lg.setColor(COLOR_TOOL_OUTLINE)
+  lg.setLineWidth(2)
+  lg.circle("line", tx, ty, toolR)
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -240,14 +248,14 @@ function Game:draw()
   lg.setLineWidth(2)
   lg.circle("line", L.targetCX, L.targetCY, L.outerR)
 
-  -- Hand sprite: behind the most-recently-tapped (or about-to-be-tapped) coin.
-  local handCoin = self.activeCoin or self.lastTappedCoin
-  if handCoin and not handCoin.used then
-    drawHandFor(handCoin)
-  elseif handCoin and handCoin.used then
+  -- Flip tool: behind the most-recently-tapped (or about-to-be-tapped) coin.
+  local toolCoin = self.activeCoin or self.lastTappedCoin
+  if toolCoin and not toolCoin.used then
+    drawToolFor(toolCoin)
+  elseif toolCoin and toolCoin.used then
     -- Find next unused coin to point at.
     for i = 1, #self.coins do
-      if not self.coins[i].used then drawHandFor(self.coins[i]); break end
+      if not self.coins[i].used then drawToolFor(self.coins[i]); break end
     end
   end
 
