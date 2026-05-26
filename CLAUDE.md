@@ -66,21 +66,30 @@ tumble — no animation frames, which suits the hand-drawn-asset pipeline.
   graded punishment up to off-board zero).
 - `docs/FLIP_PHYSICS_SPEC.md` — concrete numbers: closed-form parametric arc,
   the per-item tuning table, sensitivity falloff, floor-shrink lever.
+- `docs/FLIP_BOARD_VISUAL_SPEC.md` — exactly how the board looks: portrait
+  layout, white board on grey, 3-ring target (red/amber/green), HUD strip,
+  bottom launch zone, juice layer.
 
-### Override: prototype target shape
+### Prototype board model
 
-Both docs assume **concentric scoring rings**. The agreed prototype shape is
-simpler — and supersedes the rings in code:
-
-- **Rectangle board** with **one circular scoring zone** inside it.
-- The circle is **mutable**: cards / items / floor effects can grow it, shrink
-  it, or move it. Plan for that from day one (data-driven; size and position
-  are state, not constants).
-- **Three-tier landing resolution**:
-  - Inside the circle → marbles × multiplier, advance the chain
-  - On the rectangle but outside the circle → graze: low/no marbles, chain
-    survives
-  - Off the rectangle entirely → zero, chain resets
+- **Portrait orientation.** HUD strip on top, white board rectangle fills
+  everything below it on a light grey background.
+- **One target** in the upper half of the board, made of **three concentric
+  rings** (red bullseye / amber middle / green outer). The whole target is
+  mutable: cards / items / floor effects can grow it, shrink it, or move it.
+  Size and position are state, not constants.
+- **Multiple coins scattered** on the board at the start of a flip sequence.
+  Each floor is a sequence of flips, one coin per flip, tap-to-flip. While a
+  flip is in flight, no other coin is tappable.
+- **Hand sprite** reaches in from the **nearest screen edge** to whichever
+  coin is being interacted with — contextual, not fixed-position.
+- **4-tier landing resolution**:
+  - Bullseye (red) → high points × multiplier, advance the chain
+  - Middle ring (amber) → mid points × multiplier, advance the chain
+  - Outer ring (green) → low points × multiplier, advance the chain
+  - Off the board entirely → zero, chain resets (visible miss juice)
+- HUD label is **"POINTS"** for in-run score (internally `marbles`, transfers
+  to the global Marble bank when the run completes per the GDD).
 - The closed-form parametric arc, tap-offset input model, and per-item tuning
   table all apply unchanged.
 
