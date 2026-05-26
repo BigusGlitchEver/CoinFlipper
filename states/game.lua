@@ -20,9 +20,12 @@ local Coin         = require("entities.coin")
 local Items        = require("data.flip_items")
 
 local lg    = love.graphics
+local lm    = love.mouse
 local sqrt  = math.sqrt
 local min   = math.min
 local max   = math.max
+local cos   = math.cos
+local sin   = math.sin
 
 local Game = {}
 
@@ -101,8 +104,6 @@ local function scatterCoins(n, item)
       end
       if ok then
         local coin = Coin(x, y, L.coinR)
-        coin.boardCenterX = L.targetCX
-        coin.boardCenterY = L.targetCY
         coins[#coins + 1] = coin
         placed = true
         break
@@ -113,36 +114,51 @@ local function scatterCoins(n, item)
   return coins
 end
 
--- ---------- Flip tool (round, behind the about-to-flip coin) ----------
+-- ---------- Flip tool (round, follows the cursor) ----------
 
--- Draws a round metal-grey disc behind the given coin, nudged slightly toward
--- the nearest screen edge from that coin. Replaces the old skin-toned "hand."
-local function drawToolFor(coin)
-  if not coin then return end
-  local W, H = L.W, L.H
-  local cx, cy = coin.x, coin.y
-  -- z'd up coins still get the tool drawn at their ground position
-  local dTop, dBot, dLeft, dRight = cy, H - cy, cx, W - cx
-  local mind = min(dTop, dBot, dLeft, dRight)
-
-  local toolR  = L.coinR * 1.3
-  local offset = L.coinR * 0.5
-  local tx, ty = cx, cy
-  if mind == dTop then
-    ty = cy - offset
-  elseif mind == dBot then
-    ty = cy + offset
-  elseif mind == dLeft then
-    tx = cx - offset
-  else
-    tx = cx + offset
-  end
-
+-- The tool tracks the mouse like a custom cursor. Drawn before the coins so
+-- it sits visually behind whatever it's hovering over.
+local function drawToolAt(x, y)
+  local toolR = L.coinR * 1.3
   lg.setColor(COLOR_TOOL)
-  lg.circle("fill", tx, ty, toolR)
+  lg.circle("fill", x, y, toolR)
   lg.setColor(COLOR_TOOL_OUTLINE)
   lg.setLineWidth(2)
-  lg.circle("line", tx, ty, toolR)
+  lg.circle("line", x, y, toolR)
+  lg.setColor(1, 1, 1, 1)
+end
+
+-- ---------- Region debug overlay (press 'd' to toggle) ----------
+
+-- Authoring/tuning aid: draws each region as an outlined box on top of every
+-- live coin, with an arrow showing the launch direction. No allocations -- it
+-- iterates the item.regions table that was defined once at load time.
+local function drawRegionDebug(coin, item)
+  if not coin or coin.used or not item or not item.regions then return end
+  local r       = coin.radius
+  local cx, cy  = coin.x, coin.y
+  local regions = item.regions
+  for i = 1, #regions do
+    local reg = regions[i]
+    local x  = cx + reg.x * r
+    local y  = cy + reg.y * r
+    local w  = reg.w * r
+    local h  = reg.h * r
+    lg.setColor(1, 0.2, 0.2, 0.6)
+    lg.setLineWidth(1)
+    lg.rectangle("line", x, y, w, h)
+    -- Launch arrow from box center.
+    local mx = x + w * 0.5
+    local my = y + h * 0.5
+    local arrowLen = r * 0.75
+    local ex = mx + cos(reg.angle) * arrowLen
+    local ey = my + sin(reg.angle) * arrowLen
+    lg.setColor(1, 1, 1, 0.9)
+    lg.setLineWidth(2)
+    lg.line(mx, my, ex, ey)
+    -- Tiny arrowhead dot.
+    lg.circle("fill", ex, ey, 2)
+  end
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -201,12 +217,17 @@ function Game:enter(prev, houseName)
   self.activeCoinItem = Items.byId("coin")
   self.coins          = scatterCoins(COINS_PER_FLOOR, self.activeCoinItem)
   self.activeCoin     = nil  -- the one currently in flight, or nil
-  self.lastTappedCoin = self.coins[1]   -- where the hand points before any tap
+  -- Tool follows the mouse; initialize to current cursor so it doesn't pop in.
+  self.toolX, self.toolY = lm.getPosition()
+  self.debugRegions = self.debugRegions or false
 end
 
 function Game:exit() end
 
 function Game:update(dt)
+  -- Sample cursor once per frame; reused by both draw and (later) any
+  -- mouse-driven HUD. Stored on self -- no per-frame table allocation.
+  self.toolX, self.toolY = lm.getPosition()
   for i = 1, #self.coins do self.coins[i]:update(dt) end
   if self.activeCoin and not self.activeCoin.flipping then
     self.activeCoin = nil
@@ -248,23 +269,22 @@ function Game:draw()
   lg.setLineWidth(2)
   lg.circle("line", L.targetCX, L.targetCY, L.outerR)
 
-  -- Flip tool: behind the most-recently-tapped (or about-to-be-tapped) coin.
-  local toolCoin = self.activeCoin or self.lastTappedCoin
-  if toolCoin and not toolCoin.used then
-    drawToolFor(toolCoin)
-  elseif toolCoin and toolCoin.used then
-    -- Find next unused coin to point at.
-    for i = 1, #self.coins do
-      if not self.coins[i].used then drawToolFor(self.coins[i]); break end
-    end
-  end
+  -- Flip tool follows the cursor. Drawn behind the coins.
+  drawToolAt(self.toolX, self.toolY)
 
   -- Coins.
   for i = 1, #self.coins do self.coins[i]:draw() end
 
+  -- Region debug overlay (press 'd' to toggle).
+  if self.debugRegions then
+    for i = 1, #self.coins do
+      drawRegionDebug(self.coins[i], self.activeCoinItem)
+    end
+  end
+
   -- Bottom hint (temporary; replaced when the run/shop flow lands).
   lg.setColor(COLOR_TEXT_DIM)
-  lg.printf("HOUSE: " .. self.houseName .. "   [M] map   [R] reset   [Esc] quit",
+  lg.printf("HOUSE: " .. self.houseName .. "   [M] map   [R] reset   [D] debug   [Esc] quit",
     0, L.H - 24, L.W, "center")
   lg.setColor(1, 1, 1, 1)
 end
@@ -274,21 +294,26 @@ end
 function Game:mousepressed(x, y, button)
   if button ~= 1 then return end
   if self.activeCoin then return end                 -- one flip at a time
+  local item = self.activeCoinItem
   for i = 1, #self.coins do
     local coin = self.coins[i]
     if coin:contains(x, y) then
+      -- Click position in coin-local normalized space (coin spans -1..1).
       local offX = (x - coin.x) / coin.radius
       local offY = (y - coin.y) / coin.radius
-      local game = self
-      coin:launch(offX, offY, self.activeCoinItem, function(lx, ly)
+      local region = coin:regionAt(offX, offY, item)
+      -- Per-region overrides (schema supports `power`/`arc`); fall back to item.
+      local angle = region and region.angle or -math.pi / 2
+      local power = (region and region.power) or item.base_power or 220
+      local game  = self
+      coin:launch(angle, power, item, function(lx, ly)
         local zone, _ = resolveFlip(game, lx, ly)
         if zone == "bull" or zone == "middle" or zone == "outer" then
           coin.used = true   -- scored: retire this coin
         end
-        -- on_board_miss / off_board_miss: coin stays live, player can flip again
+        -- on_board_miss / off_board_miss: coin stays live, can be flipped again
       end)
-      self.activeCoin     = coin
-      self.lastTappedCoin = coin
+      self.activeCoin = coin
       return
     end
   end
@@ -299,6 +324,8 @@ function Game:keypressed(k)
     StateMachine.switch("map")
   elseif k == "r" then
     Game:enter(nil, self.houseName)
+  elseif k == "d" then
+    self.debugRegions = not self.debugRegions
   end
 end
 

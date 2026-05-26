@@ -157,7 +157,11 @@ function M.run()
   Game:mousepressed(firstCoin.x, firstCoin.y, 1)
   check(c, "6c tap on coin: it flips",        firstCoin.flipping)
   check(c, "6d activeCoin == that coin",      Game.activeCoin == firstCoin)
-  check(c, "6e lastTappedCoin tracked",       Game.lastTappedCoin == firstCoin)
+  -- Center tap -> center region -> fly straight UP at base_power pixels.
+  -- Verify the launch direction came from the region, not from any auto-aim.
+  check(c, "6e center tap launches straight up",
+    math.abs(firstCoin.targetX - firstCoin.x) < 1e-6
+    and firstCoin.targetY < firstCoin.y)
 
   -- While a coin is in flight, tapping another coin should do nothing.
   if #Game.coins >= 2 then
@@ -181,85 +185,109 @@ function M.run()
   check(c, "6k contains() is inverse of used",
     firstCoin:contains(firstCoin.x, firstCoin.y) == (not firstCoin.used))
 
-  -- ---------- (4) Coin:launch pixel-based parametric arc math ----------
-  print("\n[4/4] Coin:launch math (pixel-based parametric arc, per-item):")
+  -- ---------- (4) Coin:regionAt + Coin:launch (region-driven, no auto-aim) ----------
+  print("\n[4/4] Coin:regionAt + Coin:launch (region-driven, per-item):")
   local Coin   = require("entities.coin")
   local Items  = require("data.flip_items")
-  local sqrt   = math.sqrt
   local cos    = math.cos
   local sin    = math.sin
-  local atan2  = math.atan2
   local abs    = math.abs
+  local pi     = math.pi
   local coinItem = Items.byId("coin")
   local panItem  = Items.byId("pancakes")
   check(c, "items: Coin tuning loaded",     coinItem ~= nil)
   check(c, "items: Pancakes tuning loaded", panItem  ~= nil)
+  check(c, "items: Coin has regions table", coinItem and coinItem.regions ~= nil)
+  check(c, "items: Coin has 9 regions (3x3 grid)",
+    coinItem and #coinItem.regions == 9)
 
-  local function makeCoin()
-    local k = Coin(200, 600, 14)
-    k.boardCenterX, k.boardCenterY = 640, 380
-    return k
-  end
+  local function makeCoin() return Coin(200, 600, 14) end
+  local function approxEq(a, b) return abs(a - b) < 1e-6 end
 
-  -- 8a) Dead-center tap travels exactly base_power pixels along the safe line.
-  -- Coin at (200, 600), target at (640, 380); base_angle = atan2(-220, 440).
-  -- Expected landing: coin + base_power * (cos, sin)(base_angle).
+  -- 8a) Center tap -> center region -> launch straight UP (angle = -pi/2).
   local k = makeCoin()
-  local lx, ly = k:launch(0, 0, coinItem)
-  local baseAngle = atan2(380 - 600, 640 - 200)
-  local expX = 200 + cos(baseAngle) * coinItem.base_power
-  local expY = 600 + sin(baseAngle) * coinItem.base_power
-  check(c, "8a center tap travels base_power pixels along safe line",
-    abs(lx - expX) < 0.01 and abs(ly - expY) < 0.01,
-    string.format("got=(%.2f, %.2f)  expected=(%.2f, %.2f)", lx, ly, expX, expY))
+  local r = k:regionAt(0, 0, coinItem)
+  check(c, "8a center region: angle = -pi/2 (up)",
+    r and approxEq(r.angle, -pi/2),
+    r and ("angle=" .. r.angle) or "nil region")
 
-  -- 8b) Determinism: same inputs -> same landing.
-  k = makeCoin(); local a1, b1 = k:launch(0.3, -0.2, coinItem)
-  k = makeCoin(); local a2, b2 = k:launch(0.3, -0.2, coinItem)
-  check(c, "8b determinism (Coin, off-center tap)",
+  -- 8b) Left column -> fly RIGHT (angle = 0).
+  r = k:regionAt(-0.7, 0, coinItem)
+  check(c, "8b left-column region: angle = 0 (right)",
+    r and approxEq(r.angle, 0))
+
+  -- 8c) Right column -> fly LEFT (angle = pi).
+  r = k:regionAt(0.7, 0, coinItem)
+  check(c, "8c right-column region: angle = pi (left)",
+    r and approxEq(r.angle, pi))
+
+  -- 8d) Bottom row -> fly UP (angle = -pi/2).
+  r = k:regionAt(0, 0.7, coinItem)
+  check(c, "8d bottom-center region: angle = -pi/2 (up)",
+    r and approxEq(r.angle, -pi/2))
+
+  -- 8e) Top row -> fly DOWN (angle = pi/2).
+  r = k:regionAt(0, -0.7, coinItem)
+  check(c, "8e top-center region: angle = pi/2 (down)",
+    r and approxEq(r.angle, pi/2))
+
+  -- 8f) Corners combine: bottom-left tap -> up-right (angle = -pi/4).
+  r = k:regionAt(-0.7, 0.7, coinItem)
+  check(c, "8f bottom-left region: angle = -pi/4 (up-right)",
+    r and approxEq(r.angle, -pi/4))
+
+  -- 8g) Out-of-disc clamp: regionAt clamps to unit circle before matching.
+  r = k:regionAt(5, 0, coinItem)  -- way off; should clamp toward (1, 0)
+  check(c, "8g out-of-disc tap clamps to a valid region (left direction)",
+    r and approxEq(r.angle, pi))
+
+  -- 8h) Launch lands at (x + cos*power, y + sin*power) for the given angle.
+  k = makeCoin()
+  local lx, ly = k:launch(0, 200, coinItem)  -- angle 0 = right
+  check(c, "8h launch(angle=0, power=200) lands 200px right",
+    abs(lx - 400) < 0.01 and abs(ly - 600) < 0.01,
+    string.format("got=(%.2f, %.2f)", lx, ly))
+
+  -- 8i) Launch straight up.
+  k = makeCoin()
+  lx, ly = k:launch(-pi/2, 150, coinItem)
+  check(c, "8i launch(angle=-pi/2, power=150) lands 150px up",
+    abs(lx - 200) < 0.01 and abs(ly - 450) < 0.01,
+    string.format("got=(%.2f, %.2f)", lx, ly))
+
+  -- 8j) Determinism: same angle + power -> same landing.
+  k = makeCoin(); local a1, b1 = k:launch(1.234, 175, coinItem)
+  k = makeCoin(); local a2, b2 = k:launch(1.234, 175, coinItem)
+  check(c, "8j determinism: same (angle, power) -> same landing",
     a1 == a2 and b1 == b2)
 
-  -- 8c) Pancakes deviate more than Coin for the same off-center tap.
-  k = makeCoin(); local cx0, cy0 = k:launch(0,   0, coinItem)
-  k = makeCoin(); local cx1, cy1 = k:launch(0.5, 0, coinItem)
-  local coinDev = sqrt((cx1 - cx0)^2 + (cy1 - cy0)^2)
-  k = makeCoin(); local px0, py0 = k:launch(0,   0, panItem)
-  k = makeCoin(); local px1, py1 = k:launch(0.5, 0, panItem)
-  local panDev  = sqrt((px1 - px0)^2 + (py1 - py0)^2)
-  check(c, "8c Pancakes deviate more than Coin for +0.5 horizontal tap",
-    panDev > coinDev,
-    string.format("coin=%.1fpx pan=%.1fpx", coinDev, panDev))
+  -- 8k) Per-item arc: Pancakes floatier than Coin.
+  k = makeCoin(); k:launch(0, 100, coinItem); local coinArc = k.arcHeight
+  k = makeCoin(); k:launch(0, 100, panItem);  local panArc  = k.arcHeight
+  check(c, "8k Pancakes arcHeight > Coin arcHeight", panArc > coinArc)
 
-  -- 8d) Per-item arc height: Pancakes is floatier than Coin.
-  k = makeCoin(); k:launch(0, 0, coinItem); local coinArc = k.arcHeight
-  k = makeCoin(); k:launch(0, 0, panItem);  local panArc  = k.arcHeight
-  check(c, "8d Pancakes has bigger arc than Coin", panArc > coinArc)
+  -- 8l) Per-item flight_time: Pancakes flies longer than Coin.
+  k = makeCoin(); k:launch(0, 100, coinItem); local coinFt = k.flightDuration
+  k = makeCoin(); k:launch(0, 100, panItem);  local panFt  = k.flightDuration
+  check(c, "8l Pancakes flight_time > Coin flight_time", panFt > coinFt)
 
-  -- 8e) Per-item flight_time: Pancakes flies longer than Coin.
-  k = makeCoin(); k:launch(0, 0, coinItem); local coinFt = k.flightDuration
-  k = makeCoin(); k:launch(0, 0, panItem);  local panFt  = k.flightDuration
-  check(c, "8e Pancakes flight_time > Coin flight_time", panFt > coinFt)
+  -- 8m) NO AUTO-AIM: launch must NOT reference board center. Same (angle, power)
+  -- from two coins at different positions both land at the SAME offset from
+  -- their origin -- the launch is purely directional.
+  local kA = Coin(100, 100, 14); local ax, ay = kA:launch(pi/4, 100, coinItem)
+  local kB = Coin(500, 300, 14); local bx, by = kB:launch(pi/4, 100, coinItem)
+  check(c, "8m no auto-aim: launch offset is identical regardless of coin pos",
+    abs((ax - 100) - (bx - 500)) < 1e-6 and abs((ay - 100) - (by - 300)) < 1e-6)
 
-  -- 8f) offset_y: tap ABOVE center (offY < 0) adds power -> longer shot.
-  --              tap BELOW center (offY > 0) subtracts power -> shorter shot.
-  --  launch_power = base_power - offY * power_sensitivity  (negated per Fix 1)
-  k = makeCoin(); local _, _ = k:launch(0,  0,    coinItem); local centerLand = { k.targetX, k.targetY }
-  k = makeCoin();                k:launch(0,  0.5, coinItem); local shortLand  = { k.targetX, k.targetY }
-  k = makeCoin();                k:launch(0, -0.5, coinItem); local longLand   = { k.targetX, k.targetY }
-  -- "Short" should be closer to origin than center; "long" should be farther.
-  local function distFromOrigin(p) return sqrt((p[1] - 200)^2 + (p[2] - 600)^2) end
-  check(c, "8f -offset_y (above center) travels farther than center", distFromOrigin(longLand)  > distFromOrigin(centerLand))
-  check(c, "8g +offset_y (below center) travels shorter than center", distFromOrigin(shortLand) < distFromOrigin(centerLand))
-
-  -- 8h) Coin:contains() hit detection.
+  -- 8n) Coin:contains() hit detection (unchanged behavior).
   k = makeCoin()
-  check(c, "8h contains: center tap hits",       k:contains(200, 600))
-  check(c, "8i contains: near-edge tap hits",    k:contains(212, 600))
-  check(c, "8j contains: distant tap misses",    not k:contains(300, 600))
+  check(c, "8n contains: center tap hits",       k:contains(200, 600))
+  check(c, "8o contains: near-edge tap hits",    k:contains(212, 600))
+  check(c, "8p contains: distant tap misses",    not k:contains(300, 600))
   k.flipping = true
-  check(c, "8k contains: false while flipping",  not k:contains(200, 600))
+  check(c, "8q contains: false while flipping",  not k:contains(200, 600))
   k.flipping = false; k.used = true
-  check(c, "8l contains: false when used",       not k:contains(200, 600))
+  check(c, "8r contains: false when used",       not k:contains(200, 600))
 
   print("")
   print(string.format("RESULT: %d passed, %d failed", c.pass, c.fail))

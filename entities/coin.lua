@@ -5,10 +5,19 @@
 --   tumble   : sin oscillation driving x-scale squash (cosmetic only)
 --
 -- Public API:
---   Coin(x, y, radius)            constructor
---   :contains(px, py)             tap-hit detection
---   :launch(offX, offY, item, cb) closed-form parametric arc per spec
+--   Coin(x, y, radius)                 constructor
+--   :contains(px, py)                  tap-hit detection
+--   :regionAt(localX, localY, item)    pick the collision region for a tap
+--   :launch(angle, power, item, cb)    instant launch in a screen-space angle
 --   :update(dt), :draw()
+--
+-- Region-based launch model (per the region refactor):
+--   Direction is data-driven per coin type via item.regions. NO auto-aim --
+--   Coin:launch must NOT reference any target/board center. The coin flies in
+--   whatever screen-space `angle` the caller provides (resolved from the
+--   region the tap landed in), at the given `power` in pixels. Arc height
+--   comes from item.base_arc; per-region arc overrides are supported via the
+--   schema but currently consumed by the caller, not by launch itself.
 --
 -- Per FLIP_BOARD_VISUAL_SPEC: prototype draw is a filled circle in #F0C040
 -- with a 2px #333333 outline. Replaced with hand-drawn sprite later.
@@ -21,7 +30,6 @@ local sin   = math.sin
 local cos   = math.cos
 local abs   = math.abs
 local sqrt  = math.sqrt
-local atan2 = math.atan2
 local pi    = math.pi
 
 local Coin = Object:extend()
@@ -46,17 +54,14 @@ function Coin:new(x, y, radius)
   -- Per-launch tuning set by launch() from the item table.
   self.flightDuration = 0.45
   self.arcHeight      = 60
-  -- "Safe line" target. Configured by the game state (target circle center).
-  self.boardCenterX = 360
-  self.boardCenterY = 440
   -- landedCallback(x, y) is invoked once when the coin lands.
   self.landedCallback = nil
-  -- "used" = already flipped, can't be tapped again (game state owns this flag).
+  -- "used" = already flipped (game state owns this flag).
   self.used = false
 end
 
--- Tap-hit detection. True if (px, py) is inside the coin's radius AND the coin
--- is not mid-flip AND has not already been used.
+-- Tap-hit detection. True if (px, py) is inside the coin's radius AND the
+-- coin is not mid-flip AND has not already been used.
 function Coin:contains(px, py)
   if self.flipping or self.used then return false end
   local dx = px - self.x
@@ -64,51 +69,58 @@ function Coin:contains(px, py)
   return (dx * dx + dy * dy) <= (self.radius * self.radius)
 end
 
--- Launch with a normalized tap offset and per-item tuning.
--- PIXEL-BASED closed-form parametric arc per the FIX prompt + FLIP_PHYSICS_SPEC.
+-- Pick the region containing (localX, localY) for this item.
+--   localX, localY : tap relative to coin center, normalized to coin.radius
+--                    (each roughly in [-1, 1]; clamped to the unit disc here)
+--   item           : the item table whose `regions` list to walk
 --
---   offX, offY : tap relative to coin center, normalized to coin.radius
---                (each roughly in [-1, 1]; clamped to unit disc here)
---   item       : per-item tuning table (data/flip_items.lua), in PIXELS
---   callback   : invoked once when the coin lands; receives (landingX, landingY)
+-- Returns the matching region table (the schema entry the box belongs to).
+-- Fallback order: region containing (0,0) (the "center"), then regions[1].
+-- Returns nil if the item has no regions table at all.
+function Coin:regionAt(localX, localY, item)
+  if not item or not item.regions then return nil end
+  -- Clamp tap to the unit disc.
+  local d = sqrt(localX * localX + localY * localY)
+  if d > 1 then
+    local s = 1 / d
+    localX, localY = localX * s, localY * s
+  end
+  local regions = item.regions
+  -- Inclusive upper bound so points on the +x / +y edge (after disc clamp)
+  -- still land in a cell. First match wins for interior tie-breaking.
+  for i = 1, #regions do
+    local r = regions[i]
+    if localX >= r.x and localX <= r.x + r.w
+       and localY >= r.y and localY <= r.y + r.h then
+      return r
+    end
+  end
+  -- Fallback: region containing (0, 0).
+  for i = 1, #regions do
+    local r = regions[i]
+    if 0 >= r.x and 0 < r.x + r.w and 0 >= r.y and 0 < r.y + r.h then
+      return r
+    end
+  end
+  return regions[1]
+end
+
+-- Launch in a screen-space angle at the given power (in pixels).
+--   angle    : radians, screen-space (cos = +x = right, sin = +y = down)
+--   power    : pixel distance to travel
+--   item     : per-item tuning (used for base_arc + flight_time defaults)
+--   callback : invoked once when the coin lands; receives (landingX, landingY)
 --
 -- Returns (landingX, landingY) immediately at launch time. The animation only
 -- interpolates -- tumble/spin is cosmetic and CANNOT alter the landing.
--- Same tap = same landing, deterministic.
---
--- Model:
---   base_angle   = atan2 from coin -> target center  ("safe line")
---   launch_angle = base_angle + offset_x * angle_sensitivity
---   launch_power = base_power + offset_y * power_sensitivity     (PIXELS)
---   arc_height   = base_arc + offset_dist * arc_variance          (PIXELS)
---   landing      = coin + (cos(launch_angle), sin(launch_angle)) * launch_power
-function Coin:launch(offX, offY, item, callback)
-  -- Clamp tap to the unit disc.
-  local raw_dist = sqrt(offX * offX + offY * offY)
-  if raw_dist > 1 then
-    local s = 1 / raw_dist
-    offX, offY, raw_dist = offX * s, offY * s, 1
-  end
-
-  -- Safe line: from coin toward the target center.
-  local dxc = self.boardCenterX - self.x
-  local dyc = self.boardCenterY - self.y
-  local base_angle = atan2(dyc, dxc)
-
-  -- Pixel-based launch parameters (no board-units scaling).
-  local angle_sens = item.angle_sensitivity or 0.35
-  local power_sens = item.power_sensitivity or 40
-  local base_power = item.base_power or 220
-  local base_arc   = item.base_arc or 80
-  local arc_var    = item.arc_variance or 30
-
-  local launch_angle = base_angle + offX * angle_sens
-  local launch_power = base_power - offY * power_sens
-  local arc_pixels   = base_arc + raw_dist * arc_var
+-- Same angle + same power = same landing, deterministic.
+function Coin:launch(angle, power, item, callback)
+  local arc_pixels    = (item and item.base_arc)    or 80
+  local flight_time   = (item and item.flight_time) or 0.45
 
   -- Compute landing immediately (deterministic).
-  local lx = self.x + cos(launch_angle) * launch_power
-  local ly = self.y + sin(launch_angle) * launch_power
+  local lx = self.x + cos(angle) * power
+  local ly = self.y + sin(angle) * power
 
   -- Stash for the animation; the visual cannot change the result.
   self.startX         = self.x
@@ -117,7 +129,7 @@ function Coin:launch(offX, offY, item, callback)
   self.targetY        = ly
   self.flipTime       = 0
   self.flipping       = true
-  self.flightDuration = item.flight_time or 0.45
+  self.flightDuration = flight_time
   self.arcHeight      = arc_pixels
   self.landedCallback = callback
 
