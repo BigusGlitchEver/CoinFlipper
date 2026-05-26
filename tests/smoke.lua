@@ -185,8 +185,8 @@ function M.run()
   check(c, "6k contains() is inverse of used",
     firstCoin:contains(firstCoin.x, firstCoin.y) == (not firstCoin.used))
 
-  -- ---------- (4) Coin:regionAt + Coin:launch (region-driven, no auto-aim) ----------
-  print("\n[4/4] Coin:regionAt + Coin:launch (region-driven, per-item):")
+  -- ---------- (4) Region map + circle press + power/arc curves ----------
+  print("\n[4/4] Coin:regionAt + Coin:pressedBy + Coin:launch:")
   local Coin   = require("entities.coin")
   local Items  = require("data.flip_items")
   local cos    = math.cos
@@ -200,94 +200,123 @@ function M.run()
   check(c, "items: Coin has regions table", coinItem and coinItem.regions ~= nil)
   check(c, "items: Coin has 9 regions (3x3 grid)",
     coinItem and #coinItem.regions == 9)
+  -- Curve invariants: edge press = farther, center press = higher.
+  check(c, "items: Coin edge_power > center_power",
+    coinItem.edge_power > coinItem.center_power)
+  check(c, "items: Coin center_arc > edge_arc",
+    coinItem.center_arc > coinItem.edge_arc)
+  check(c, "items: Pancakes edge_power > center_power",
+    panItem.edge_power > panItem.center_power)
+  check(c, "items: Pancakes center_arc > edge_arc",
+    panItem.center_arc > panItem.edge_arc)
 
   local function makeCoin() return Coin(200, 600, 14) end
   local function approxEq(a, b) return abs(a - b) < 1e-6 end
 
-  -- 8a) Center tap -> center region -> launch straight UP (angle = -pi/2).
+  -- 8a) Center region -> straight UP.
   local k = makeCoin()
   local r = k:regionAt(0, 0, coinItem)
   check(c, "8a center region: angle = -pi/2 (up)",
-    r and approxEq(r.angle, -pi/2),
-    r and ("angle=" .. r.angle) or "nil region")
+    r and approxEq(r.angle, -pi/2))
 
-  -- 8b) Left column -> fly RIGHT (angle = 0).
+  -- 8b) Left column -> fly RIGHT.
   r = k:regionAt(-0.7, 0, coinItem)
   check(c, "8b left-column region: angle = 0 (right)",
     r and approxEq(r.angle, 0))
 
-  -- 8c) Right column -> fly LEFT (angle = pi).
+  -- 8c) Right column -> fly LEFT.
   r = k:regionAt(0.7, 0, coinItem)
   check(c, "8c right-column region: angle = pi (left)",
     r and approxEq(r.angle, pi))
 
-  -- 8d) Bottom row -> fly UP (angle = -pi/2).
+  -- 8d) Bottom row -> fly UP.
   r = k:regionAt(0, 0.7, coinItem)
   check(c, "8d bottom-center region: angle = -pi/2 (up)",
     r and approxEq(r.angle, -pi/2))
 
-  -- 8e) Top row -> fly DOWN (angle = pi/2).
+  -- 8e) Top row -> fly DOWN.
   r = k:regionAt(0, -0.7, coinItem)
   check(c, "8e top-center region: angle = pi/2 (down)",
     r and approxEq(r.angle, pi/2))
 
-  -- 8f) Corners combine: bottom-left tap -> up-right (angle = -pi/4).
+  -- 8f) Corners combine: bottom-left tap -> up-right.
   r = k:regionAt(-0.7, 0.7, coinItem)
   check(c, "8f bottom-left region: angle = -pi/4 (up-right)",
     r and approxEq(r.angle, -pi/4))
 
-  -- 8g) Out-of-disc clamp: regionAt clamps to unit circle before matching.
-  r = k:regionAt(5, 0, coinItem)  -- way off; should clamp toward (1, 0)
+  -- 8g) Out-of-disc clamp.
+  r = k:regionAt(5, 0, coinItem)
   check(c, "8g out-of-disc tap clamps to a valid region (left direction)",
     r and approxEq(r.angle, pi))
 
-  -- 8h) Launch lands at (x + cos*power, y + sin*power) for the given angle.
+  -- 8h) pressedBy: direct hit registers, returns center offset.
   k = makeCoin()
-  local lx, ly = k:launch(0, 200, coinItem)  -- angle 0 = right
-  check(c, "8h launch(angle=0, power=200) lands 200px right",
-    abs(lx - 400) < 0.01 and abs(ly - 600) < 0.01,
-    string.format("got=(%.2f, %.2f)", lx, ly))
+  local ox, oy, od = k:pressedBy(200, 600, 18)
+  check(c, "8h pressedBy dead-center: offDist == 0",
+    ox and od and approxEq(od, 0))
 
-  -- 8i) Launch straight up.
+  -- 8i) pressedBy: tool OUTSIDE the coin's own radius but overlapping still
+  -- registers a press (the whole point of the new circle test).
+  -- Coin at (200, 600) r=14; tool at (220, 600) r=18 -> centers 20 apart,
+  -- sumR = 32, so they overlap. The tool sits 6px outside the coin's outline.
   k = makeCoin()
-  lx, ly = k:launch(-pi/2, 150, coinItem)
-  check(c, "8i launch(angle=-pi/2, power=150) lands 150px up",
-    abs(lx - 200) < 0.01 and abs(ly - 450) < 0.01,
-    string.format("got=(%.2f, %.2f)", lx, ly))
+  ox, oy, od = k:pressedBy(220, 600, 18)
+  check(c, "8i pressedBy: tool outside coin radius still registers (overlap)",
+    ox ~= nil)
 
-  -- 8j) Determinism: same angle + power -> same landing.
-  k = makeCoin(); local a1, b1 = k:launch(1.234, 175, coinItem)
-  k = makeCoin(); local a2, b2 = k:launch(1.234, 175, coinItem)
-  check(c, "8j determinism: same (angle, power) -> same landing",
+  -- 8j) Clamp: when the tool is outside the coin outline, offDist saturates at 1.
+  check(c, "8j pressedBy: outside-outline contact clamps offDist to 1",
+    od and approxEq(od, 1))
+
+  -- 8k) pressedBy: no overlap -> nil.
+  k = makeCoin()
+  ox, oy, od = k:pressedBy(300, 600, 18)  -- 100 apart, sumR=32
+  check(c, "8k pressedBy: clearly outside -> nil", ox == nil)
+
+  -- 8l) pressedBy: flipping/used coins are not pressable.
+  k = makeCoin(); k.flipping = true
+  check(c, "8l pressedBy: flipping coin -> nil", k:pressedBy(200, 600, 18) == nil)
+  k = makeCoin(); k.used = true
+  check(c, "8m pressedBy: used coin -> nil",     k:pressedBy(200, 600, 18) == nil)
+
+  -- 8n) launch(angle, power, arc, item, cb) lands at coin + (cos*power, sin*power).
+  k = makeCoin()
+  local lx, ly = k:launch(0, 200, 60, coinItem)
+  check(c, "8n launch(angle=0, power=200) lands 200px right",
+    abs(lx - 400) < 0.01 and abs(ly - 600) < 0.01)
+
+  -- 8o) Explicit arc is stored on the coin (not pulled from item.base_arc).
+  k = makeCoin(); k:launch(0, 200, 60,  coinItem)
+  check(c, "8o launch stores passed arc (60)",  approxEq(k.arcHeight, 60))
+  k = makeCoin(); k:launch(0, 200, 222, coinItem)
+  check(c, "8p launch stores passed arc (222)", approxEq(k.arcHeight, 222))
+
+  -- 8q) Determinism: same args -> same landing.
+  k = makeCoin(); local a1, b1 = k:launch(1.234, 175, 90, coinItem)
+  k = makeCoin(); local a2, b2 = k:launch(1.234, 175, 90, coinItem)
+  check(c, "8q determinism: same (angle, power, arc) -> same landing",
     a1 == a2 and b1 == b2)
 
-  -- 8k) Per-item arc: Pancakes floatier than Coin.
-  k = makeCoin(); k:launch(0, 100, coinItem); local coinArc = k.arcHeight
-  k = makeCoin(); k:launch(0, 100, panItem);  local panArc  = k.arcHeight
-  check(c, "8k Pancakes arcHeight > Coin arcHeight", panArc > coinArc)
+  -- 8r) Per-item flight_time still drives flight duration.
+  k = makeCoin(); k:launch(0, 100, 60, coinItem); local coinFt = k.flightDuration
+  k = makeCoin(); k:launch(0, 100, 60, panItem);  local panFt  = k.flightDuration
+  check(c, "8r Pancakes flight_time > Coin flight_time", panFt > coinFt)
 
-  -- 8l) Per-item flight_time: Pancakes flies longer than Coin.
-  k = makeCoin(); k:launch(0, 100, coinItem); local coinFt = k.flightDuration
-  k = makeCoin(); k:launch(0, 100, panItem);  local panFt  = k.flightDuration
-  check(c, "8l Pancakes flight_time > Coin flight_time", panFt > coinFt)
-
-  -- 8m) NO AUTO-AIM: launch must NOT reference board center. Same (angle, power)
-  -- from two coins at different positions both land at the SAME offset from
-  -- their origin -- the launch is purely directional.
-  local kA = Coin(100, 100, 14); local ax, ay = kA:launch(pi/4, 100, coinItem)
-  local kB = Coin(500, 300, 14); local bx, by = kB:launch(pi/4, 100, coinItem)
-  check(c, "8m no auto-aim: launch offset is identical regardless of coin pos",
+  -- 8s) NO AUTO-AIM: launch offset depends only on (angle, power).
+  local kA = Coin(100, 100, 14); local ax, ay = kA:launch(pi/4, 100, 60, coinItem)
+  local kB = Coin(500, 300, 14); local bx, by = kB:launch(pi/4, 100, 60, coinItem)
+  check(c, "8s no auto-aim: launch offset is identical regardless of coin pos",
     abs((ax - 100) - (bx - 500)) < 1e-6 and abs((ay - 100) - (by - 300)) < 1e-6)
 
-  -- 8n) Coin:contains() hit detection (unchanged behavior).
+  -- 8t) Coin:contains() hit detection (unchanged behavior).
   k = makeCoin()
-  check(c, "8n contains: center tap hits",       k:contains(200, 600))
-  check(c, "8o contains: near-edge tap hits",    k:contains(212, 600))
-  check(c, "8p contains: distant tap misses",    not k:contains(300, 600))
+  check(c, "8t contains: center tap hits",       k:contains(200, 600))
+  check(c, "8u contains: near-edge tap hits",    k:contains(212, 600))
+  check(c, "8v contains: distant tap misses",    not k:contains(300, 600))
   k.flipping = true
-  check(c, "8q contains: false while flipping",  not k:contains(200, 600))
+  check(c, "8w contains: false while flipping",  not k:contains(200, 600))
   k.flipping = false; k.used = true
-  check(c, "8r contains: false when used",       not k:contains(200, 600))
+  check(c, "8x contains: false when used",       not k:contains(200, 600))
 
   print("")
   print(string.format("RESULT: %d passed, %d failed", c.pass, c.fail))

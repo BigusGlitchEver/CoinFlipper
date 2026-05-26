@@ -26,6 +26,15 @@ local min   = math.min
 local max   = math.max
 local cos   = math.cos
 local sin   = math.sin
+local pi    = math.pi
+local huge  = math.huge
+
+-- Tiny helper: linear interpolation in [0, 1].
+local function lerp(a, b, t) return a + (b - a) * t end
+
+-- Tool radius is hoisted into L (rebuildLayout) so drawing and hit-testing
+-- agree on the same number. Tunable: 1.3x coin radius matches the visual.
+local TOOL_R_FACTOR = 1.3
 
 local Game = {}
 
@@ -82,6 +91,8 @@ local function rebuildLayout()
   -- Coin size: use the spec value (48px diameter) directly. Coins are
   -- intentionally larger than the target -- tappable, not aim-able.
   L.coinR = COIN_RADIUS_AT_390W
+  -- Tool size derived from coin radius. Read by drawing AND hit-testing.
+  L.toolR = L.coinR * TOOL_R_FACTOR
 end
 
 -- ---------- Coin scatter ----------
@@ -119,7 +130,7 @@ end
 -- The tool tracks the mouse like a custom cursor. Drawn before the coins so
 -- it sits visually behind whatever it's hovering over.
 local function drawToolAt(x, y)
-  local toolR = L.coinR * 1.3
+  local toolR = L.toolR
   lg.setColor(COLOR_TOOL)
   lg.circle("fill", x, y, toolR)
   lg.setColor(COLOR_TOOL_OUTLINE)
@@ -160,6 +171,63 @@ local function drawRegionDebug(coin, item)
     lg.circle("fill", ex, ey, 2)
   end
   lg.setColor(1, 1, 1, 1)
+end
+
+-- Live trajectory preview for the currently-hovered coin: contact dot, the
+-- resolved launch arrow at the resolved power, and a sampled arc showing the
+-- z (height) lift. Authored so future coin tuning is visible at a glance.
+local function drawHoverDebug(coin, item, toolX, toolY, toolR)
+  if not coin or not item then return end
+  local offX, offY, offDist = coin:pressedBy(toolX, toolY, toolR)
+  if not offX then return end
+  local region = coin:regionAt(offX, offY, item)
+  if not region then return end
+  local angle = region.angle
+  local power = (region.power) or lerp(item.center_power or 120, item.edge_power or 300, offDist)
+  local arc   = (region.arc)   or lerp(item.center_arc   or 150, item.edge_arc   or 55,  offDist)
+  -- Contact point on the coin's surface (post-clamp).
+  local contactX = coin.x + offX * coin.radius
+  local contactY = coin.y + offY * coin.radius
+  lg.setColor(1, 1, 0, 1)
+  lg.circle("fill", contactX, contactY, 4)
+  -- Direction line at full power.
+  local endX = coin.x + cos(angle) * power
+  local endY = coin.y + sin(angle) * power
+  lg.setColor(0.2, 1, 0.4, 0.85)
+  lg.setLineWidth(2)
+  lg.line(coin.x, coin.y, endX, endY)
+  -- Arc preview (sampled height curve, no allocations).
+  lg.setColor(0.2, 0.6, 1, 0.8)
+  local px, py = coin.x, coin.y
+  for i = 1, 14 do
+    local t  = i / 14
+    local sx = coin.x + (endX - coin.x) * t
+    local sy = coin.y + (endY - coin.y) * t - sin(t * pi) * arc
+    lg.line(px, py, sx, sy)
+    px, py = sx, sy
+  end
+  lg.setColor(1, 1, 1, 1)
+end
+
+-- ---------- Press resolution ----------
+
+-- Pick the live coin whose center is nearest the tool, and only if it
+-- actually overlaps the tool circle. Returns nil if none qualifies.
+local function findPressedCoin(coins, tx, ty, toolR)
+  local best, bestD2 = nil, huge
+  for i = 1, #coins do
+    local coin = coins[i]
+    if not coin.flipping and not coin.used then
+      local dx = tx - coin.x
+      local dy = ty - coin.y
+      local d2 = dx * dx + dy * dy
+      local sumR = coin.radius + toolR
+      if d2 <= sumR * sumR and d2 < bestD2 then
+        best, bestD2 = coin, d2
+      end
+    end
+  end
+  return best
 end
 
 -- ---------- Flip resolution ----------
@@ -217,6 +285,7 @@ function Game:enter(prev, houseName)
   self.activeCoinItem = Items.byId("coin")
   self.coins          = scatterCoins(COINS_PER_FLOOR, self.activeCoinItem)
   self.activeCoin     = nil  -- the one currently in flight, or nil
+  self.hoveredCoin    = nil  -- nearest pressable coin under the tool (debug)
   -- Tool follows the mouse; initialize to current cursor so it doesn't pop in.
   self.toolX, self.toolY = lm.getPosition()
   self.debugRegions = self.debugRegions or false
@@ -225,9 +294,12 @@ end
 function Game:exit() end
 
 function Game:update(dt)
-  -- Sample cursor once per frame; reused by both draw and (later) any
-  -- mouse-driven HUD. Stored on self -- no per-frame table allocation.
+  -- Sample cursor once per frame; stored on self -- no per-frame allocation.
   self.toolX, self.toolY = lm.getPosition()
+  -- Cache the coin currently under the tool for the debug overlay. The actual
+  -- press in mousepressed re-runs this query at click time (so we don't rely
+  -- on a one-frame-stale answer for gameplay).
+  self.hoveredCoin = findPressedCoin(self.coins, self.toolX, self.toolY, L.toolR)
   for i = 1, #self.coins do self.coins[i]:update(dt) end
   if self.activeCoin and not self.activeCoin.flipping then
     self.activeCoin = nil
@@ -280,6 +352,8 @@ function Game:draw()
     for i = 1, #self.coins do
       drawRegionDebug(self.coins[i], self.activeCoinItem)
     end
+    drawHoverDebug(self.hoveredCoin, self.activeCoinItem,
+                   self.toolX, self.toolY, L.toolR)
   end
 
   -- Bottom hint (temporary; replaced when the run/shop flow lands).
@@ -294,29 +368,32 @@ end
 function Game:mousepressed(x, y, button)
   if button ~= 1 then return end
   if self.activeCoin then return end                 -- one flip at a time
-  local item = self.activeCoinItem
-  for i = 1, #self.coins do
-    local coin = self.coins[i]
-    if coin:contains(x, y) then
-      -- Click position in coin-local normalized space (coin spans -1..1).
-      local offX = (x - coin.x) / coin.radius
-      local offY = (y - coin.y) / coin.radius
-      local region = coin:regionAt(offX, offY, item)
-      -- Per-region overrides (schema supports `power`/`arc`); fall back to item.
-      local angle = region and region.angle or -math.pi / 2
-      local power = (region and region.power) or item.base_power or 220
-      local game  = self
-      coin:launch(angle, power, item, function(lx, ly)
-        local zone, _ = resolveFlip(game, lx, ly)
-        if zone == "bull" or zone == "middle" or zone == "outer" then
-          coin.used = true   -- scored: retire this coin
-        end
-        -- on_board_miss / off_board_miss: coin stays live, can be flipped again
-      end)
-      self.activeCoin = coin
-      return
+  local item  = self.activeCoinItem
+  local toolR = L.toolR
+  -- Tool circle centered at the click. Pick the nearest live coin it overlaps.
+  local coin = findPressedCoin(self.coins, x, y, toolR)
+  if not coin then return end
+  -- Contact offset in coin-local normalized space, clamped to the unit disc
+  -- (so a tool sitting outside the coin's outline still maps onto its edge).
+  local offX, offY, offDist = coin:pressedBy(x, y, toolR)
+  if not offX then return end                        -- defensive; shouldn't happen
+  local region = coin:regionAt(offX, offY, item)
+  -- Per-region overrides take precedence; otherwise lerp item-level curves.
+  -- offDist = 0 (center) -> short & high; offDist = 1 (edge) -> long & flat.
+  local angle = region and region.angle or -pi / 2
+  local power = (region and region.power)
+                or lerp(item.center_power or 120, item.edge_power or 300, offDist)
+  local arc   = (region and region.arc)
+                or lerp(item.center_arc   or 150, item.edge_arc   or 55,  offDist)
+  local game  = self
+  coin:launch(angle, power, arc, item, function(lx, ly)
+    local zone, _ = resolveFlip(game, lx, ly)
+    if zone == "bull" or zone == "middle" or zone == "outer" then
+      coin.used = true   -- scored: retire this coin
     end
-  end
+    -- on_board_miss / off_board_miss: coin stays live, can be flipped again
+  end)
+  self.activeCoin = coin
 end
 
 function Game:keypressed(k)

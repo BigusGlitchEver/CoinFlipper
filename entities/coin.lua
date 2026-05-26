@@ -5,19 +5,20 @@
 --   tumble   : sin oscillation driving x-scale squash (cosmetic only)
 --
 -- Public API:
---   Coin(x, y, radius)                 constructor
---   :contains(px, py)                  tap-hit detection
---   :regionAt(localX, localY, item)    pick the collision region for a tap
---   :launch(angle, power, item, cb)    instant launch in a screen-space angle
+--   Coin(x, y, radius)                       constructor
+--   :contains(px, py)                        point-in-coin hit test (tests/UI)
+--   :pressedBy(toolX, toolY, toolR)          circle-vs-coin overlap test
+--   :regionAt(localX, localY, item)          pick the collision region
+--   :launch(angle, power, arc, item, cb)     instant launch (deterministic)
 --   :update(dt), :draw()
 --
--- Region-based launch model (per the region refactor):
+-- Region-based launch model:
 --   Direction is data-driven per coin type via item.regions. NO auto-aim --
 --   Coin:launch must NOT reference any target/board center. The coin flies in
 --   whatever screen-space `angle` the caller provides (resolved from the
---   region the tap landed in), at the given `power` in pixels. Arc height
---   comes from item.base_arc; per-region arc overrides are supported via the
---   schema but currently consumed by the caller, not by launch itself.
+--   region the press landed in), at the given `power` in pixels, with the
+--   given `arc` in pixels. The caller is responsible for resolving power/arc
+--   from the contact offset (typically: edge press = far/flat, center = short/high).
 --
 -- Per FLIP_BOARD_VISUAL_SPEC: prototype draw is a filled circle in #F0C040
 -- with a 2px #333333 outline. Replaced with hand-drawn sprite later.
@@ -69,6 +70,33 @@ function Coin:contains(px, py)
   return (dx * dx + dy * dy) <= (self.radius * self.radius)
 end
 
+-- Circle-vs-coin overlap test. The tool circle is centered at (toolX, toolY)
+-- with radius toolR; the coin is overlapped when their centers are within
+-- coin.radius + toolR. The tool can sit OUTSIDE the coin's own outline and
+-- still press it -- the contact offset is then clamped to the unit disc,
+-- mapping the contact onto the coin's surface.
+--
+-- Returns: offX, offY, offDist
+--   (each in coin-local normalized space; offDist in [0, 1], 0 = center, 1 = edge)
+-- Or nil if no overlap or coin is not flippable.
+function Coin:pressedBy(toolX, toolY, toolR)
+  if self.flipping or self.used then return nil end
+  local dx = toolX - self.x
+  local dy = toolY - self.y
+  local sumR = self.radius + toolR
+  if (dx * dx + dy * dy) > (sumR * sumR) then return nil end
+  -- Contact in coin-local normalized space (coin spans -1..1).
+  local offX = dx / self.radius
+  local offY = dy / self.radius
+  local mag  = sqrt(offX * offX + offY * offY)
+  if mag > 1 then
+    local s = 1 / mag
+    offX, offY = offX * s, offY * s
+    mag = 1
+  end
+  return offX, offY, mag
+end
+
 -- Pick the region containing (localX, localY) for this item.
 --   localX, localY : tap relative to coin center, normalized to coin.radius
 --                    (each roughly in [-1, 1]; clamped to the unit disc here)
@@ -105,18 +133,18 @@ function Coin:regionAt(localX, localY, item)
   return regions[1]
 end
 
--- Launch in a screen-space angle at the given power (in pixels).
+-- Launch in a screen-space angle at the given power and arc (all in pixels).
 --   angle    : radians, screen-space (cos = +x = right, sin = +y = down)
 --   power    : pixel distance to travel
---   item     : per-item tuning (used for base_arc + flight_time defaults)
+--   arc      : visible arc lift at flight midpoint (pixels)
+--   item     : per-item tuning (used for flight_time)
 --   callback : invoked once when the coin lands; receives (landingX, landingY)
 --
 -- Returns (landingX, landingY) immediately at launch time. The animation only
 -- interpolates -- tumble/spin is cosmetic and CANNOT alter the landing.
--- Same angle + same power = same landing, deterministic.
-function Coin:launch(angle, power, item, callback)
-  local arc_pixels    = (item and item.base_arc)    or 80
-  local flight_time   = (item and item.flight_time) or 0.45
+-- Same (angle, power) = same landing, deterministic.
+function Coin:launch(angle, power, arc, item, callback)
+  local flight_time = (item and item.flight_time) or 0.45
 
   -- Compute landing immediately (deterministic).
   local lx = self.x + cos(angle) * power
@@ -130,7 +158,7 @@ function Coin:launch(angle, power, item, callback)
   self.flipTime       = 0
   self.flipping       = true
   self.flightDuration = flight_time
-  self.arcHeight      = arc_pixels
+  self.arcHeight      = arc
   self.landedCallback = callback
 
   return lx, ly
