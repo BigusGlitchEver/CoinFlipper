@@ -47,9 +47,11 @@ function M.run()
   local c = newCounter()
 
   -- ---------- (a) Syntax check every source file ----------
-  print("\n[1/2] Syntax check (loadfile == luajit -bl coverage):")
+  -- Use love.filesystem.load -- it reads from LOVE's mounted source filesystem
+  -- and parses but does not execute. Equivalent coverage to `luajit -bl <file>`.
+  print("\n[1/2] Syntax check (love.filesystem.load == luajit -bl coverage):")
   for _, src in ipairs(SOURCES) do
-    local fn, err = loadfile(src)
+    local fn, err = love.filesystem.load(src)
     check(c, "parse " .. src, fn ~= nil, err)
   end
 
