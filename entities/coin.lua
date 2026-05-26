@@ -103,7 +103,7 @@ function Coin:launch(offX, offY, item, callback)
   local arc_var    = item.arc_variance or 30
 
   local launch_angle = base_angle + offX * angle_sens
-  local launch_power = base_power + offY * power_sens
+  local launch_power = base_power - offY * power_sens
   local arc_pixels   = base_arc + raw_dist * arc_var
 
   -- Compute landing immediately (deterministic).

@@ -1,6 +1,6 @@
 -- states/map.lua
 -- Neighborhood cul-de-sac. 3 houses, sequential unlock.
--- Portrait layout (720x1280): houses in a triangle around a central green patch.
+-- Landscape layout (800x600): houses in a triangle around a central green patch.
 -- Click an unlocked, un-conquered house -> StateMachine.switch("game", name).
 
 local StateMachine = require("statemachine")
@@ -11,13 +11,13 @@ local Map = {}
 
 -- Module-scope so conquest state survives state transitions.
 local houses = {
-  { name = "Grandma", x = 200, y = 500, conquered = false },
-  { name = "Cat",     x = 520, y = 500, conquered = false },
-  { name = "GymBro",  x = 360, y = 820, conquered = false },
+  { name = "Grandma", x = 200, y = 210, conquered = false },
+  { name = "Cat",     x = 600, y = 210, conquered = false },
+  { name = "GymBro",  x = 400, y = 430, conquered = false },
 }
 
-local HOUSE_RADIUS = 80
-local CUL_DE_SAC_CX, CUL_DE_SAC_CY, CUL_DE_SAC_R = 360, 660, 260
+local HOUSE_RADIUS = 70
+local CUL_DE_SAC_CX, CUL_DE_SAC_CY, CUL_DE_SAC_R = 400, 310, 180
 
 local function isUnlocked(i)
   if i == 1 then return true end

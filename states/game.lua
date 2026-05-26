@@ -273,8 +273,11 @@ function Game:mousepressed(x, y, button)
       local offY = (y - coin.y) / coin.radius
       local game = self
       coin:launch(offX, offY, self.activeCoinItem, function(lx, ly)
-        resolveFlip(game, lx, ly)
-        coin.used = true
+        local zone, _ = resolveFlip(game, lx, ly)
+        if zone == "bull" or zone == "middle" or zone == "outer" then
+          coin.used = true   -- scored: retire this coin
+        end
+        -- on_board_miss / off_board_miss: coin stays live, player can flip again
       end)
       self.activeCoin     = coin
       self.lastTappedCoin = coin

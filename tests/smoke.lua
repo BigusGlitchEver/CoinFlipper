@@ -170,10 +170,16 @@ function M.run()
   -- Tick time forward past the flight duration to let it land.
   for i = 1, 30 do Game:update(0.05) end   -- 1.5s
   check(c, "6h after landing: coin no longer flipping", not firstCoin.flipping)
-  check(c, "6i after landing: coin marked used",        firstCoin.used)
   check(c, "6j after landing: activeCoin cleared",      Game.activeCoin == nil)
-  check(c, "6k used coin no longer tappable (contains=false)",
-    not firstCoin:contains(firstCoin.x, firstCoin.y))
+  -- Fix 2: coin.used is only set on scoring rings (bull/middle/outer).
+  -- Derive whether this shot scored from the landing distance to the target.
+  local ldx = firstCoin.targetX - L.targetCX
+  local ldy = firstCoin.targetY - L.targetCY
+  local shotScored = (ldx * ldx + ldy * ldy) <= (L.outerR * L.outerR)
+  check(c, "6i scored -> coin.used; miss -> coin still live",
+    firstCoin.used == shotScored)
+  check(c, "6k contains() is inverse of used",
+    firstCoin:contains(firstCoin.x, firstCoin.y) == (not firstCoin.used))
 
   -- ---------- (4) Coin:launch pixel-based parametric arc math ----------
   print("\n[4/4] Coin:launch math (pixel-based parametric arc, per-item):")
@@ -234,15 +240,16 @@ function M.run()
   k = makeCoin(); k:launch(0, 0, panItem);  local panFt  = k.flightDuration
   check(c, "8e Pancakes flight_time > Coin flight_time", panFt > coinFt)
 
-  -- 8f) offset_y pushes the shot long (positive) or short (negative).
+  -- 8f) offset_y: tap ABOVE center (offY < 0) adds power -> longer shot.
+  --              tap BELOW center (offY > 0) subtracts power -> shorter shot.
+  --  launch_power = base_power - offY * power_sensitivity  (negated per Fix 1)
   k = makeCoin(); local _, _ = k:launch(0,  0,    coinItem); local centerLand = { k.targetX, k.targetY }
-  k = makeCoin();                k:launch(0, -0.5, coinItem); local shortLand  = { k.targetX, k.targetY }
-  k = makeCoin();                k:launch(0,  0.5, coinItem); local longLand   = { k.targetX, k.targetY }
+  k = makeCoin();                k:launch(0,  0.5, coinItem); local shortLand  = { k.targetX, k.targetY }
+  k = makeCoin();                k:launch(0, -0.5, coinItem); local longLand   = { k.targetX, k.targetY }
   -- "Short" should be closer to origin than center; "long" should be farther.
   local function distFromOrigin(p) return sqrt((p[1] - 200)^2 + (p[2] - 600)^2) end
-  -- power_sensitivity > 0 means +offset_y INCREASES launch_power.
-  check(c, "8f +offset_y travels farther than center", distFromOrigin(longLand)  > distFromOrigin(centerLand))
-  check(c, "8g -offset_y travels shorter than center", distFromOrigin(shortLand) < distFromOrigin(centerLand))
+  check(c, "8f -offset_y (above center) travels farther than center", distFromOrigin(longLand)  > distFromOrigin(centerLand))
+  check(c, "8g +offset_y (below center) travels shorter than center", distFromOrigin(shortLand) < distFromOrigin(centerLand))
 
   -- 8h) Coin:contains() hit detection.
   k = makeCoin()
