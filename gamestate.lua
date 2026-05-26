@@ -1,51 +1,43 @@
-Gamestate = {}
+-- gamestate.lua
+-- Minimal state machine driving the core loop:
+--   map -> run (3 floors w/ shops between) -> boss decision -> back to map
+-- Each state is a module in gamestates/ exposing optional:
+--   enter(prev, ...), leave(next), update(dt), draw(), keypressed(k), mousepressed(x,y,b)
 
-function Gamestate.switch(state)
-    if Gamestate.current then
-        if Gamestate.current.leave then
-            Gamestate.current:leave()
-        end
-    end
-    Gamestate.current = state
-    if Gamestate.current.enter then
-        Gamestate.current:enter()
-    end
+local Gamestate = {}
+local current = nil
+
+local function noop() end
+
+local function safe(state, fn)
+    return state and state[fn] or noop
+end
+
+function Gamestate.switch(stateModule, ...)
+    local prev = current
+    safe(prev, 'leave')(prev, stateModule)
+    current = stateModule
+    safe(current, 'enter')(current, prev, ...)
+end
+
+function Gamestate.current()
+    return current
 end
 
 function Gamestate.update(dt)
-    if Gamestate.current.update then
-        Gamestate.current:update(dt)
-    end
+    safe(current, 'update')(current, dt)
 end
 
 function Gamestate.draw()
-    if Gamestate.current.draw then
-        Gamestate.current:draw()
-    end
+    safe(current, 'draw')(current)
 end
 
-function Gamestate.keypressed(key)
-    if Gamestate.current.keypressed then
-        Gamestate.current:keypressed(key)
-    end
+function Gamestate.keypressed(k)
+    safe(current, 'keypressed')(current, k)
 end
 
-function Gamestate.mousepressed(x, y, button)
-    if Gamestate.current.mousepressed then
-        Gamestate.current:mousepressed(x, y, button)
-    end
-end
-
-function Gamestate.mousereleased(x, y, button)
-    if Gamestate.current.mousereleased then
-        Gamestate.current:mousereleased(x, y, button)
-    end
-end
-
-function Gamestate.mousemoved(x, y, dx, dy, istouch)
-    if Gamestate.current and Gamestate.current.mousemoved then
-        Gamestate.current:mousemoved(x, y, dx, dy, istouch)
-    end
+function Gamestate.mousepressed(x, y, b)
+    safe(current, 'mousepressed')(current, x, y, b)
 end
 
 return Gamestate

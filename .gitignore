@@ -1,44 +1,15 @@
-# Compiled Lua sources
-luac.out
-
-# luarocks build files
-*.src.rock
-*.zip
-*.tar.gz
+# LÖVE build artifacts
 *.love
 
-# Object files
-*.o
-*.os
-*.ko
-*.obj
-*.elf
+# OS
+.DS_Store
+Thumbs.db
 
-# Precompiled Headers
-*.gch
-*.pch
+# IDE
+.idea/
+.vscode/
+*.iml
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.def
-*.exp
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-dist/
-
+# Node (for build tooling, if any)
+node_modules/
+package-lock.json
