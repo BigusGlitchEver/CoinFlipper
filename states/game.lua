@@ -55,24 +55,35 @@ end
 local TOOL_R_FACTOR = 2.5
 
 -- ---------- Rim dots (the actual coin colliders) ----------
--- Four dots at the tool's compass points. Indices: 1=top, 2=right,
--- 3=bottom, 4=left. Precomputed unit-vector offsets so per-frame draw and
--- hit-test do zero allocation.
-local DOT_UX     = { 0, 1, 0, -1 }   -- cos(theta) for top/right/bottom/left
-local DOT_UY     = { -1, 0, 1, 0 }   -- sin(theta) (screen-space, +y = down)
-local DOT_R      = 6                  -- dot fill radius in pixels
-local DOT_OUTLINE = 1.5               -- dot outline width
+-- SIX dots evenly spaced at 60 deg, starting at 270 deg (top) and going
+-- clockwise. Indices:
+--   1 = 270 (top)         red     #FF4444
+--   2 = 330 (top-right)   orange  #FF9933
+--   3 =  30 (bottom-right) yellow #FFDD00
+--   4 =  90 (bottom)      green   #44CC44
+--   5 = 150 (bottom-left) cyan    #33CCFF
+--   6 = 210 (top-left)    purple  #AA44FF
+-- Unit-vector offsets precomputed at file load -- no per-frame trig.
+local DOT_UX, DOT_UY = {}, {}
+do
+  local angles = { 270, 330, 30, 90, 150, 210 }
+  for i = 1, 6 do
+    local rad = angles[i] * pi / 180
+    DOT_UX[i] = cos(rad)
+    DOT_UY[i] = sin(rad)
+  end
+end
+local DOT_R         = 6     -- normal dot fill radius
+local DOT_R_ARMED   = 8     -- armed (auto OR selected) dot radius
+local DOT_OUTLINE   = 1.5   -- dot outline width
 local DOT_COLORS = {
-  { 0xFF/255, 0x44/255, 0x44/255 },  -- top    red
-  { 0xFF/255, 0xDD/255, 0x00/255 },  -- right  yellow
-  { 0x44/255, 0xCC/255, 0x44/255 },  -- bottom green
-  { 0x33/255, 0xCC/255, 0xFF/255 },  -- left   cyan
+  { 0xFF/255, 0x44/255, 0x44/255 },  -- 1 top         red
+  { 0xFF/255, 0x99/255, 0x33/255 },  -- 2 top-right   orange
+  { 0xFF/255, 0xDD/255, 0x00/255 },  -- 3 bot-right   yellow
+  { 0x44/255, 0xCC/255, 0x44/255 },  -- 4 bottom      green
+  { 0x33/255, 0xCC/255, 0xFF/255 },  -- 5 bot-left    cyan
+  { 0xAA/255, 0x44/255, 0xFF/255 },  -- 6 top-left    purple
 }
-
--- WASD <-> dot mapping (used ONLY to resolve an active conflict). Outside
--- of an active conflict these keys are ignored entirely.
-local KEY_TO_DOT = { w = 1, d = 2, s = 3, a = 4 }
-local DOT_TO_KEY = { "W", "D", "S", "A" }
 
 local Game = {}
 
@@ -166,12 +177,12 @@ end
 
 -- ---------- Flip tool (round, follows the cursor) ----------
 
--- Draws the tool: large translucent grey disc + opaque rim + 4 colored dots
--- at the compass points (the only colliders). `activeDot` (1-4 or nil) gets
--- a solid white halo (auto-armed). `conflictDots` is a 4-bool table; any dot
--- with conflictDots[d] == true gets a YELLOW PULSING halo + WASD letter so
--- the player can see a tiebreaker is required.
-local function drawToolAt(x, y, activeDot, conflictDots)
+-- Draws the tool: large translucent grey disc + opaque rim + 6 colored dots
+-- around the rim. Three per-dot visual states:
+--   ARMED (auto-arm OR conflict selection): thick white outline, r=8.
+--   AVAILABLE (in conflict list but not selected): pulsing outline, r=6.
+--   INACTIVE: normal colored fill + dark outline, r=6.
+local function drawToolAt(x, y, armedDot, conflictDots, conflictCount)
   local toolR = L.toolR
   lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.50)
   lg.circle("fill", x, y, toolR)
@@ -182,66 +193,73 @@ local function drawToolAt(x, y, activeDot, conflictDots)
   local t = lt.getTime()
   local pulse = 0.5 + 0.5 * sin(t * 8)   -- 0..1, ~1.3 Hz
 
-  for d = 1, 4 do
+  for d = 1, 6 do
     local dx = x + DOT_UX[d] * toolR
     local dy = y + DOT_UY[d] * toolR
     local col = DOT_COLORS[d]
-    lg.setColor(col[1], col[2], col[3], 1)
-    lg.circle("fill", dx, dy, DOT_R)
-    lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 1)
-    lg.setLineWidth(DOT_OUTLINE)
-    lg.circle("line", dx, dy, DOT_R)
 
-    if d == activeDot then
-      -- Auto-armed: solid white halo.
-      lg.setColor(1, 1, 1, 0.95)
+    local isArmed = (d == armedDot)
+    -- "Available" = in conflict list but not currently armed. Linear scan of
+    -- up to 6 indices; trivial cost, zero allocation.
+    local isAvailable = false
+    if conflictDots and conflictCount and conflictCount > 0 and not isArmed then
+      for i = 1, conflictCount do
+        if conflictDots[i] == d then isAvailable = true; break end
+      end
+    end
+
+    local r = isArmed and DOT_R_ARMED or DOT_R
+    lg.setColor(col[1], col[2], col[3], 1)
+    lg.circle("fill", dx, dy, r)
+
+    if isArmed then
+      lg.setColor(1, 1, 1, 1)
+      lg.setLineWidth(3)
+      lg.circle("line", dx, dy, r)
+    elseif isAvailable then
+      -- Pulsing outline + base dark outline underneath.
+      lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 1)
+      lg.setLineWidth(DOT_OUTLINE)
+      lg.circle("line", dx, dy, r)
+      lg.setColor(1, 1, 1, 0.30 + pulse * 0.60)
       lg.setLineWidth(2)
-      lg.circle("line", dx, dy, DOT_R + 3)
-    elseif conflictDots and conflictDots[d] then
-      -- Conflict: yellow pulsing halo + the WASD letter floating outward.
-      lg.setColor(1, 1, 0.3, 0.30 + pulse * 0.65)
-      lg.setLineWidth(2)
-      lg.circle("line", dx, dy, DOT_R + 3 + pulse * 3)
-      local label = DOT_TO_KEY[d]
-      local font  = lg.getFont()
-      local lw    = font:getWidth(label)
-      local lh    = font:getHeight()
-      -- Push the letter further away from tool center.
-      local lx = dx + DOT_UX[d] * 14 - lw * 0.5
-      local ly = dy + DOT_UY[d] * 14 - lh * 0.5
-      lg.setColor(0, 0, 0, 0.75)
-      lg.rectangle("fill", lx - 4, ly - 2, lw + 8, lh + 4, 4, 4)
-      lg.setColor(1, 1, 0.4, 1)
-      lg.print(label, lx, ly)
+      lg.circle("line", dx, dy, r + 2 + pulse * 2)
+    else
+      lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 1)
+      lg.setLineWidth(DOT_OUTLINE)
+      lg.circle("line", dx, dy, r)
     end
   end
   lg.setColor(1, 1, 1, 1)
 end
 
--- Small "W / D" style prompt floating above the contested coin so the
--- decision is obvious even if the player's eyes are on the coin, not the tool.
-local function drawConflictHint(coin, conflictDots)
-  if not coin or not conflictDots then return end
-  -- Build the hint text without allocating intermediate junk: count keys first.
-  local count = 0
-  for d = 1, 4 do if conflictDots[d] then count = count + 1 end end
-  if count < 2 then return end
-  -- Compose "W / S" once -- a single string concat per frame is acceptable.
-  local text = nil
-  for d = 1, 4 do
-    if conflictDots[d] then
-      text = text and (text .. " / " .. DOT_TO_KEY[d]) or DOT_TO_KEY[d]
+-- Hint row floating above the contested coin: one small colored dot per
+-- conflicting rim point, with the currently selected one highlighted.
+local function drawConflictHint(coin, conflictDots, conflictCount, selectedIdx)
+  if not coin or not conflictDots or not conflictCount or conflictCount < 2 then return end
+  local r = 5
+  local spacing = 14
+  local totalW = (conflictCount - 1) * spacing
+  local hx = coin.x - totalW * 0.5
+  local hy = coin.y - coin.radius - r - 16
+  lg.setColor(0, 0, 0, 0.75)
+  lg.rectangle("fill", hx - r - 6, hy - r - 4, totalW + 2*r + 12, 2*r + 8, 5, 5)
+  for i = 1, conflictCount do
+    local d = conflictDots[i]
+    local col = DOT_COLORS[d]
+    local cx = hx + (i - 1) * spacing
+    lg.setColor(col[1], col[2], col[3], 1)
+    lg.circle("fill", cx, hy, r)
+    if i == selectedIdx then
+      lg.setColor(1, 1, 1, 1)
+      lg.setLineWidth(2)
+      lg.circle("line", cx, hy, r + 2)
+    else
+      lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 1)
+      lg.setLineWidth(1)
+      lg.circle("line", cx, hy, r)
     end
   end
-  local font = lg.getFont()
-  local tw   = font:getWidth(text)
-  local th   = font:getHeight()
-  local hx   = coin.x - tw * 0.5
-  local hy   = coin.y - coin.radius - th - 14
-  lg.setColor(0, 0, 0, 0.78)
-  lg.rectangle("fill", hx - 8, hy - 4, tw + 16, th + 8, 6, 6)
-  lg.setColor(1, 1, 0.4, 1)
-  lg.print(text, hx, hy)
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -329,29 +347,20 @@ end
 
 -- ---------- Press resolution ----------
 
--- Per-frame contact resolution with conflict detection.
---   For each live coin, count how many rim dots sit inside it.
---     0 dots         -> no contact for that coin.
---     1 dot          -> single-arm candidate (deepest single across all
---                       coins wins, as before).
---     2+ dots        -> CONFLICT for that coin. The first coin found in
---                       conflict short-circuits everything (no auto-arm) and
---                       outConflict[d] is set true for each dot inside it.
---                       The player must press a matching WASD key.
--- Returns (coin, dotIdx). dotIdx == nil + coin set -> conflict; nil + nil -> no contact.
--- outConflict is a 4-element table the caller owns; we reset and (maybe) populate it.
+-- Per-frame contact resolution with conflict detection over the 6 rim dots.
+--   For each live coin:
+--     0 hits  -> no contact
+--     1 hit   -> single auto-arm candidate (deepest across all coins wins)
+--     2+ hits -> CONFLICT for this coin (first conflict coin wins; the
+--                conflicting dot indices are written to outConflict[1..count]
+--                in clockwise (dot-index) order, count returned).
+-- Returns (coin, dotIdx, count):
+--   (nil, nil, 0)         no contact
+--   (coin, idx, 0)        auto-arm at dot idx (no conflict)
+--   (coin, nil, count>=2) conflict; outConflict[1..count] holds the dot indices
+-- outConflict is a list table the caller owns -- we wipe entries 1..6 first.
 local function findPressedCoin(coins, toolX, toolY, toolR, outConflict)
-  -- Always reset the conflict mask first.
-  outConflict[1] = false
-  outConflict[2] = false
-  outConflict[3] = false
-  outConflict[4] = false
-
-  -- Precompute the four dot positions once (stack-local scalars, no alloc).
-  local d1x = toolX + DOT_UX[1] * toolR; local d1y = toolY + DOT_UY[1] * toolR
-  local d2x = toolX + DOT_UX[2] * toolR; local d2y = toolY + DOT_UY[2] * toolR
-  local d3x = toolX + DOT_UX[3] * toolR; local d3y = toolY + DOT_UY[3] * toolR
-  local d4x = toolX + DOT_UX[4] * toolR; local d4y = toolY + DOT_UY[4] * toolR
+  for i = 1, 6 do outConflict[i] = nil end
 
   local soloCoin, soloDot, soloD2 = nil, nil, huge
 
@@ -362,39 +371,63 @@ local function findPressedCoin(coins, toolX, toolY, toolR, outConflict)
       local r2 = coin.radius * coin.radius
       local hits = 0
       local deepDot, deepD2 = nil, huge
-
+      local in1, in2, in3, in4, in5, in6
       local dx, dy, dsq
-      dx = d1x - cx; dy = d1y - cy; dsq = dx*dx + dy*dy
-      local in1 = dsq < r2
+
+      dx = toolX + DOT_UX[1] * toolR - cx
+      dy = toolY + DOT_UY[1] * toolR - cy
+      dsq = dx*dx + dy*dy
+      in1 = dsq < r2
       if in1 then hits = hits + 1; if dsq < deepD2 then deepDot, deepD2 = 1, dsq end end
 
-      dx = d2x - cx; dy = d2y - cy; dsq = dx*dx + dy*dy
-      local in2 = dsq < r2
+      dx = toolX + DOT_UX[2] * toolR - cx
+      dy = toolY + DOT_UY[2] * toolR - cy
+      dsq = dx*dx + dy*dy
+      in2 = dsq < r2
       if in2 then hits = hits + 1; if dsq < deepD2 then deepDot, deepD2 = 2, dsq end end
 
-      dx = d3x - cx; dy = d3y - cy; dsq = dx*dx + dy*dy
-      local in3 = dsq < r2
+      dx = toolX + DOT_UX[3] * toolR - cx
+      dy = toolY + DOT_UY[3] * toolR - cy
+      dsq = dx*dx + dy*dy
+      in3 = dsq < r2
       if in3 then hits = hits + 1; if dsq < deepD2 then deepDot, deepD2 = 3, dsq end end
 
-      dx = d4x - cx; dy = d4y - cy; dsq = dx*dx + dy*dy
-      local in4 = dsq < r2
+      dx = toolX + DOT_UX[4] * toolR - cx
+      dy = toolY + DOT_UY[4] * toolR - cy
+      dsq = dx*dx + dy*dy
+      in4 = dsq < r2
       if in4 then hits = hits + 1; if dsq < deepD2 then deepDot, deepD2 = 4, dsq end end
 
+      dx = toolX + DOT_UX[5] * toolR - cx
+      dy = toolY + DOT_UY[5] * toolR - cy
+      dsq = dx*dx + dy*dy
+      in5 = dsq < r2
+      if in5 then hits = hits + 1; if dsq < deepD2 then deepDot, deepD2 = 5, dsq end end
+
+      dx = toolX + DOT_UX[6] * toolR - cx
+      dy = toolY + DOT_UY[6] * toolR - cy
+      dsq = dx*dx + dy*dy
+      in6 = dsq < r2
+      if in6 then hits = hits + 1; if dsq < deepD2 then deepDot, deepD2 = 6, dsq end end
+
       if hits >= 2 then
-        -- Conflict on this coin takes precedence over any other contact.
-        outConflict[1] = in1
-        outConflict[2] = in2
-        outConflict[3] = in3
-        outConflict[4] = in4
-        return coin, nil
+        -- Pack the conflicting dot indices into outConflict[1..count].
+        local count = 0
+        if in1 then count = count + 1; outConflict[count] = 1 end
+        if in2 then count = count + 1; outConflict[count] = 2 end
+        if in3 then count = count + 1; outConflict[count] = 3 end
+        if in4 then count = count + 1; outConflict[count] = 4 end
+        if in5 then count = count + 1; outConflict[count] = 5 end
+        if in6 then count = count + 1; outConflict[count] = 6 end
+        return coin, nil, count
       elseif hits == 1 and deepD2 < soloD2 then
         soloCoin, soloDot, soloD2 = coin, deepDot, deepD2
       end
     end
   end
 
-  if soloCoin then return soloCoin, soloDot end
-  return nil
+  if soloCoin then return soloCoin, soloDot, 0 end
+  return nil, nil, 0
 end
 
 -- ---------- Flip resolution ----------
@@ -476,14 +509,21 @@ function Game:enter(prev, houseName)
   self.coins          = scatterCoins(COINS_PER_FLOOR, self.activeCoinItem)
   self.activeCoin     = nil  -- the one currently in flight, or nil
   self.hoveredCoin    = nil  -- coin a rim dot is currently inside, if any
-  self.hoveredDotIdx  = nil  -- 1..4 (top/right/bottom/left) or nil
-  self.hoveredDotX    = nil  -- screen position of the active dot
-  self.hoveredDotY    = nil
-  -- conflictDots: preallocated 4-bool table reset every frame by _refreshHover.
-  -- When self.hoveredCoin is set but self.hoveredDotIdx is nil, ANY true entry
-  -- in this table means the corresponding dot is in conflict (WASD required).
-  self.conflictDots   = self.conflictDots or { false, false, false, false }
-  for d = 1, 4 do self.conflictDots[d] = false end
+  self.hoveredDotIdx  = nil  -- 1..6 auto-arm dot (single in-coin dot), or nil
+  -- conflictDots: preallocated list table. After _refreshHover, entries
+  -- 1..conflictCount hold the dot indices currently inside hoveredCoin (in
+  -- clockwise order). conflictCount >= 2 means we're in conflict.
+  -- conflictIdx is the index into conflictDots of the currently SELECTED dot.
+  self.conflictDots   = self.conflictDots or {}
+  for i = 1, 6 do self.conflictDots[i] = nil end
+  self.conflictCount  = 0
+  self.conflictIdx    = 1
+  -- armedDotIdx is the dot that will actually fire on click. It equals
+  -- hoveredDotIdx in the auto-arm case, or conflictDots[conflictIdx] in the
+  -- conflict case. Computed by _updateArmed.
+  self.armedDotIdx    = nil
+  self.armedDotX      = nil
+  self.armedDotY      = nil
   -- Tool follows the mouse; initialize to current cursor so it doesn't pop in.
   self.toolX, self.toolY = lm.getPosition()
   self.debugRegions = self.debugRegions or false
@@ -497,21 +537,59 @@ function Game:exit()
   lm.setVisible(true)
 end
 
+-- Computes armedDotIdx + armedDotX/Y from the current hover/conflict state.
+function Game:_updateArmed()
+  local idx
+  if self.hoveredDotIdx then
+    idx = self.hoveredDotIdx
+  elseif self.conflictCount > 0 then
+    idx = self.conflictDots[self.conflictIdx]
+  end
+  self.armedDotIdx = idx
+  if idx then
+    self.armedDotX = self.toolX + DOT_UX[idx] * L.toolR
+    self.armedDotY = self.toolY + DOT_UY[idx] * L.toolR
+  else
+    self.armedDotX = nil
+    self.armedDotY = nil
+  end
+end
+
 -- Recompute hover/conflict state from the current self.toolX / self.toolY.
 -- Called by update (every frame) AND mousepressed (so a fresh sample drives
--- the click decision even if the cursor moved since the last frame).
+-- the click decision even if the cursor moved since the last frame). Preserves
+-- the player's previously-selected conflict dot when possible, so tool jitter
+-- doesn't reset their A/D choice.
 function Game:_refreshHover()
-  local coin, dotIdx = findPressedCoin(
+  local prevHoveredCoin = self.hoveredCoin
+  local prevSelectedDot
+  if self.conflictCount > 0 then
+    prevSelectedDot = self.conflictDots[self.conflictIdx]
+  end
+
+  local coin, dotIdx, count = findPressedCoin(
     self.coins, self.toolX, self.toolY, L.toolR, self.conflictDots)
   self.hoveredCoin   = coin
   self.hoveredDotIdx = dotIdx
-  if dotIdx then
-    self.hoveredDotX = self.toolX + DOT_UX[dotIdx] * L.toolR
-    self.hoveredDotY = self.toolY + DOT_UY[dotIdx] * L.toolR
+  self.conflictCount = count
+
+  if count >= 2 then
+    -- New conflict OR conflict on a different coin: default to first.
+    -- Same-coin refresh: try to keep the previously-selected dot.
+    if coin ~= prevHoveredCoin or prevSelectedDot == nil then
+      self.conflictIdx = 1
+    else
+      local newIdx = 1
+      for i = 1, count do
+        if self.conflictDots[i] == prevSelectedDot then newIdx = i; break end
+      end
+      self.conflictIdx = newIdx
+    end
   else
-    self.hoveredDotX = nil
-    self.hoveredDotY = nil
+    self.conflictIdx = 1
   end
+
+  self:_updateArmed()
 end
 
 function Game:update(dt)
@@ -565,17 +643,18 @@ function Game:draw()
   -- Highlight the coin the tool is currently touching (armed OR in conflict).
   drawHighlightFor(self.hoveredCoin)
 
-  -- Conflict prompt: "W / S" style hint floating above the contested coin.
-  -- Only fires when hoveredCoin is set AND no single dot was auto-armed.
-  if self.hoveredCoin and not self.hoveredDotIdx then
-    drawConflictHint(self.hoveredCoin, self.conflictDots)
+  -- Conflict row hint above the contested coin: small colored dots, the
+  -- currently selected one highlighted. Only shown when 2+ dots are inside.
+  if self.conflictCount >= 2 then
+    drawConflictHint(self.hoveredCoin, self.conflictDots,
+                     self.conflictCount, self.conflictIdx)
   end
 
   -- Flip tool follows the cursor. Drawn ON TOP of the coins so you can see
   -- it make contact (translucent fill lets the coin show through). The
-  -- active dot (if any) gets a white halo; conflicting dots get yellow pulses.
-  drawToolAt(self.toolX, self.toolY, self.hoveredDotIdx,
-             (self.hoveredCoin and not self.hoveredDotIdx) and self.conflictDots or nil)
+  -- armed dot gets a white outline; conflict-available dots get a pulse.
+  drawToolAt(self.toolX, self.toolY, self.armedDotIdx,
+             self.conflictDots, self.conflictCount)
 
   -- Region debug overlay (press 'd' to toggle). On top of everything.
   if self.debugRegions then
@@ -583,7 +662,7 @@ function Game:draw()
       drawRegionDebug(self.coins[i], self.activeCoinItem)
     end
     drawHoverDebug(self.hoveredCoin, self.activeCoinItem,
-                   self.hoveredDotX, self.hoveredDotY)
+                   self.armedDotX, self.armedDotY)
   end
 
   -- Bottom hint (temporary; replaced when the run/shop flow lands).
@@ -601,26 +680,26 @@ function Game:mousepressed(x, y, button)
   -- Re-sample so the click decision uses the freshest cursor position.
   self.toolX, self.toolY = x, y
   self:_refreshHover()
-  if not self.hoveredCoin then return end            -- no dot inside any coin
-  if not self.hoveredDotIdx then return end          -- conflict: WASD required
-  fireFlip(self, self.hoveredCoin, self.hoveredDotX, self.hoveredDotY)
+  if not self.armedDotIdx then return end            -- no dot inside any coin
+  fireFlip(self, self.hoveredCoin, self.armedDotX, self.armedDotY)
 end
 
 function Game:keypressed(k)
-  -- WASD ONLY does something when an active conflict is on screen and the
-  -- pressed key matches one of the conflicting dots. Outside conflict, WASD
-  -- keys are ignored entirely (per spec). Debug toggle moved to 'g' so it
-  -- doesn't collide with 'd' = right dot.
-  local dot = KEY_TO_DOT[k]
-  if dot
-     and not self.activeCoin
-     and self.hoveredCoin and not self.hoveredDotIdx
-     and self.conflictDots[dot] then
-    local toolR = L.toolR
-    local dotX = self.toolX + DOT_UX[dot] * toolR
-    local dotY = self.toolY + DOT_UY[dot] * toolR
-    fireFlip(self, self.hoveredCoin, dotX, dotY)
-    return
+  -- A/D and left/right cycle through the conflicting dots when 2+ are inside
+  -- the same coin. They do NOTHING when there is no conflict. The cycle
+  -- wraps. Click is still the trigger -- selection just changes which dot.
+  if not self.activeCoin and self.conflictCount > 1 then
+    if k == "a" or k == "left" then
+      self.conflictIdx = self.conflictIdx - 1
+      if self.conflictIdx < 1 then self.conflictIdx = self.conflictCount end
+      self:_updateArmed()
+      return
+    elseif k == "d" or k == "right" then
+      self.conflictIdx = self.conflictIdx + 1
+      if self.conflictIdx > self.conflictCount then self.conflictIdx = 1 end
+      self:_updateArmed()
+      return
+    end
   end
   if k == "m" then
     StateMachine.switch("map")
