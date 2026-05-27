@@ -32,6 +32,21 @@ local huge  = math.huge
 -- Tiny helper: linear interpolation in [0, 1].
 local function lerp(a, b, t) return a + (b - a) * t end
 
+-- Two-zone power/arc model. A hard discontinuity at zone_threshold (typically
+-- 0.65): inner zone is a short, high pop; outer zone is a long, flat launch.
+-- The snap is intentional. Returns power, arc as multiple values (no alloc).
+local function resolveShot(item, offDist)
+  local th = item.zone_threshold or 0.65
+  if offDist < th then
+    local t = offDist / th
+    return lerp(item.inner_power_center or 80,  item.inner_power_edge or 130, t),
+           lerp(item.inner_arc_center   or 220, item.inner_arc_edge   or 160, t)
+  end
+  local t = (offDist - th) / (1 - th)
+  return lerp(item.outer_power_center or 180, item.outer_power_edge or 340, t),
+         lerp(item.outer_arc_center   or 70,  item.outer_arc_edge   or 25,  t)
+end
+
 -- Tool radius is hoisted into L (rebuildLayout) so drawing and hit-testing
 -- agree on the same number. Tunable: 1.3x coin radius matches the visual.
 local TOOL_R_FACTOR = 1.3
@@ -196,8 +211,9 @@ local function drawHoverDebug(coin, item, toolX, toolY, toolR)
   local region = coin:regionAt(offX, offY, item)
   if not region then return end
   local angle = region.angle
-  local power = (region.power) or lerp(item.center_power or 120, item.edge_power or 300, offDist)
-  local arc   = (region.arc)   or lerp(item.center_arc   or 150, item.edge_arc   or 55,  offDist)
+  local power, arc = resolveShot(item, offDist)
+  if region.power then power = region.power end
+  if region.arc   then arc   = region.arc   end
   -- Contact point on the coin's surface (post-clamp).
   local contactX = coin.x + offX * coin.radius
   local contactY = coin.y + offY * coin.radius
@@ -402,13 +418,14 @@ function Game:mousepressed(x, y, button)
   local offX, offY, offDist = coin:pressedBy(x, y, toolR)
   if not offX then return end                        -- defensive; shouldn't happen
   local region = coin:regionAt(offX, offY, item)
-  -- Per-region overrides take precedence; otherwise lerp item-level curves.
-  -- offDist = 0 (center) -> short & high; offDist = 1 (edge) -> long & flat.
+  -- Two-zone resolution. Per-region overrides still take precedence so future
+  -- coin types can author wild trajectories without touching this logic.
   local angle = region and region.angle or -pi / 2
-  local power = (region and region.power)
-                or lerp(item.center_power or 120, item.edge_power or 300, offDist)
-  local arc   = (region and region.arc)
-                or lerp(item.center_arc   or 150, item.edge_arc   or 55,  offDist)
+  local power, arc = resolveShot(item, offDist)
+  if region then
+    if region.power then power = region.power end
+    if region.arc   then arc   = region.arc   end
+  end
   local game  = self
   coin:launch(angle, power, arc, item, function(lx, ly)
     local zone, _ = resolveFlip(game, lx, ly)
@@ -434,6 +451,7 @@ end
 
 Game._resolveFlip     = resolveFlip
 Game._findPressedCoin = findPressedCoin
+Game._resolveShot     = resolveShot
 Game._L               = L  -- layout table (read after enter())
 
 return Game

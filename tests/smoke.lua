@@ -231,15 +231,19 @@ function M.run()
   check(c, "items: Coin has regions table", coinItem and coinItem.regions ~= nil)
   check(c, "items: Coin has 9 regions (3x3 grid)",
     coinItem and #coinItem.regions == 9)
-  -- Curve invariants: edge press = farther, center press = higher.
-  check(c, "items: Coin edge_power > center_power",
-    coinItem.edge_power > coinItem.center_power)
-  check(c, "items: Coin center_arc > edge_arc",
-    coinItem.center_arc > coinItem.edge_arc)
-  check(c, "items: Pancakes edge_power > center_power",
-    panItem.edge_power > panItem.center_power)
-  check(c, "items: Pancakes center_arc > edge_arc",
-    panItem.center_arc > panItem.edge_arc)
+  -- Two-zone invariants: outer launches outpace inner pops; pops out-arc launches.
+  check(c, "items: Coin zone_threshold == 0.65",
+    coinItem.zone_threshold == 0.65)
+  check(c, "items: Coin outer_power_edge > inner_power_edge (launch > pop)",
+    coinItem.outer_power_edge > coinItem.inner_power_edge)
+  check(c, "items: Coin inner_arc_center > outer_arc_edge (pop > launch arc)",
+    coinItem.inner_arc_center > coinItem.outer_arc_edge)
+  check(c, "items: Coin SNAP -- outer_power_center > inner_power_edge",
+    coinItem.outer_power_center > coinItem.inner_power_edge)
+  check(c, "items: Pancakes outer_power_edge > inner_power_edge",
+    panItem.outer_power_edge > panItem.inner_power_edge)
+  check(c, "items: Pancakes inner_arc_center > outer_arc_edge",
+    panItem.inner_arc_center > panItem.outer_arc_edge)
 
   local function makeCoin() return Coin(200, 600, 14) end
   local function approxEq(a, b) return abs(a - b) < 1e-6 end
@@ -357,6 +361,41 @@ function M.run()
   check(c, "8w contains: false while flipping",  not k:contains(200, 600))
   k.flipping = false; k.used = true
   check(c, "8x contains: false when used",       not k:contains(200, 600))
+
+  -- 9: Two-zone power/arc model with hard discontinuity at zone_threshold.
+  --    Dead center pops short and high; just inside threshold still pops;
+  --    just outside threshold snaps to a long, flat launch.
+  print("\n[bonus] resolveShot two-zone model (snap at 0.65):")
+  local rp, ra = Game._resolveShot(coinItem, 0.0)
+  check(c, "9a dead center: power == 80, arc == 220",
+    rp == 80 and ra == 220,
+    string.format("got power=%.2f arc=%.2f", rp, ra))
+
+  rp, ra = Game._resolveShot(coinItem, 0.64)
+  check(c, "9b just inside threshold (0.64): power ~ 129, arc ~ 161",
+    abs(rp - 129.23) < 0.5 and abs(ra - 160.92) < 0.5,
+    string.format("got power=%.2f arc=%.2f", rp, ra))
+
+  rp, ra = Game._resolveShot(coinItem, 0.65)
+  check(c, "9c snap at threshold (0.65): power == 180, arc == 70",
+    rp == 180 and ra == 70,
+    string.format("got power=%.2f arc=%.2f", rp, ra))
+
+  -- 9d) Edge: maximum launch.
+  rp, ra = Game._resolveShot(coinItem, 1.0)
+  check(c, "9d at edge (1.0): power == 340, arc == 25",
+    rp == 340 and ra == 25)
+
+  -- 9e) The snap is a real discontinuity: across the threshold, power JUMPS
+  --     up by >= 40 (from ~130 to 180) and arc DROPS by >= 80 (from ~160 to 70).
+  local p_below, a_below = Game._resolveShot(coinItem, 0.6499)
+  local p_above, a_above = Game._resolveShot(coinItem, 0.6500)
+  check(c, "9e snap: power jumps up across threshold (>= 40px)",
+    (p_above - p_below) >= 40,
+    string.format("below=%.2f above=%.2f", p_below, p_above))
+  check(c, "9f snap: arc drops across threshold (>= 80px)",
+    (a_below - a_above) >= 80,
+    string.format("below=%.2f above=%.2f", a_below, a_above))
 
   print("")
   print(string.format("RESULT: %d passed, %d failed", c.pass, c.fail))
