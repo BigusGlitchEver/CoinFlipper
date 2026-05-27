@@ -49,6 +49,7 @@ local COLOR_OUTER          = { 0x5D/255, 0xB3/255, 0x5D/255 }
 local COLOR_TARGET_OUTLINE = { 0x33/255, 0x33/255, 0x33/255 }
 local COLOR_TOOL           = { 0x9A/255, 0xA0/255, 0xA6/255 }
 local COLOR_TOOL_OUTLINE   = { 0x33/255, 0x33/255, 0x33/255 }
+local COLOR_HIGHLIGHT      = { 0.20, 0.95, 1.00 }   -- cyan "armed" ring
 local COLOR_TEXT           = { 0.10, 0.10, 0.10 }
 local COLOR_TEXT_DIM       = { 0.40, 0.40, 0.40 }
 
@@ -127,15 +128,27 @@ end
 
 -- ---------- Flip tool (round, follows the cursor) ----------
 
--- The tool tracks the mouse like a custom cursor. Drawn before the coins so
--- it sits visually behind whatever it's hovering over.
+-- The tool tracks the mouse like a custom cursor. Drawn ON TOP of the coins
+-- so you can see it make contact. Fill is translucent (alpha 0.5) so the
+-- coin shows through where they overlap; outline stays opaque.
 local function drawToolAt(x, y)
   local toolR = L.toolR
-  lg.setColor(COLOR_TOOL)
+  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.50)
   lg.circle("fill", x, y, toolR)
-  lg.setColor(COLOR_TOOL_OUTLINE)
+  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 1.0)
   lg.setLineWidth(2)
   lg.circle("line", x, y, toolR)
+  lg.setColor(1, 1, 1, 1)
+end
+
+-- "Armed" ring around the coin the tool circle is currently touching. Drawn
+-- after the coins so it remains visible. The ring sits just outside the
+-- coin's outline so it doesn't fight with the coin art.
+local function drawHighlightFor(coin)
+  if not coin then return end
+  lg.setColor(COLOR_HIGHLIGHT[1], COLOR_HIGHLIGHT[2], COLOR_HIGHLIGHT[3], 0.90)
+  lg.setLineWidth(3)
+  lg.circle("line", coin.x, coin.y, coin.radius + 4)
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -285,13 +298,19 @@ function Game:enter(prev, houseName)
   self.activeCoinItem = Items.byId("coin")
   self.coins          = scatterCoins(COINS_PER_FLOOR, self.activeCoinItem)
   self.activeCoin     = nil  -- the one currently in flight, or nil
-  self.hoveredCoin    = nil  -- nearest pressable coin under the tool (debug)
+  self.hoveredCoin    = nil  -- nearest pressable coin under the tool
   -- Tool follows the mouse; initialize to current cursor so it doesn't pop in.
   self.toolX, self.toolY = lm.getPosition()
   self.debugRegions = self.debugRegions or false
+  -- Hide the OS cursor on the flip board -- the grey tool circle IS the
+  -- pointer. lm.getPosition() still works while the cursor is hidden.
+  lm.setVisible(false)
 end
 
-function Game:exit() end
+function Game:exit()
+  -- Restore normal cursor for map/menus.
+  lm.setVisible(true)
+end
 
 function Game:update(dt)
   -- Sample cursor once per frame; stored on self -- no per-frame allocation.
@@ -341,13 +360,18 @@ function Game:draw()
   lg.setLineWidth(2)
   lg.circle("line", L.targetCX, L.targetCY, L.outerR)
 
-  -- Flip tool follows the cursor. Drawn behind the coins.
-  drawToolAt(self.toolX, self.toolY)
-
   -- Coins.
   for i = 1, #self.coins do self.coins[i]:draw() end
 
-  -- Region debug overlay (press 'd' to toggle).
+  -- Highlight the coin the tool is currently touching (armed). Drawn after
+  -- the coins so it's visible above them.
+  drawHighlightFor(self.hoveredCoin)
+
+  -- Flip tool follows the cursor. Drawn ON TOP of the coins so you can see
+  -- it make contact (translucent fill lets the coin show through).
+  drawToolAt(self.toolX, self.toolY)
+
+  -- Region debug overlay (press 'd' to toggle). On top of everything.
   if self.debugRegions then
     for i = 1, #self.coins do
       drawRegionDebug(self.coins[i], self.activeCoinItem)
@@ -408,7 +432,8 @@ end
 
 -- ---------- Test hooks ----------
 
-Game._resolveFlip = resolveFlip
-Game._L           = L  -- layout table (read after enter())
+Game._resolveFlip     = resolveFlip
+Game._findPressedCoin = findPressedCoin
+Game._L               = L  -- layout table (read after enter())
 
 return Game

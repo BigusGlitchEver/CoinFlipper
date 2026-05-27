@@ -185,6 +185,37 @@ function M.run()
   check(c, "6k contains() is inverse of used",
     firstCoin:contains(firstCoin.x, firstCoin.y) == (not firstCoin.used))
 
+  -- 7: Tool circle IS the collider. A left-click while ANY part of the grey
+  --    circle touches a coin must flip that coin -- even if the click point
+  --    itself is outside the coin's own outline.
+  Game:enter(nil, "Grandma")
+  local toolR  = Game._L.toolR
+  local Coin   = require("entities.coin")
+  -- 7a) Direct test of the helper: grazing edge (centers exactly sumR apart)
+  --     counts as a hit, just beyond counts as a miss.
+  local lone   = { Coin(400, 400, 14) }
+  local grazeX = 400 + 14 + toolR        -- centers exactly coin.r + toolR apart
+  check(c, "7a findPressedCoin: grazing edge (exactly sumR apart) hits",
+    Game._findPressedCoin(lone, grazeX, 400, toolR) == lone[1])
+  check(c, "7b findPressedCoin: 1px beyond sumR -> nil",
+    Game._findPressedCoin(lone, grazeX + 1, 400, toolR) == nil)
+  -- 7c) End-to-end: click position OUTSIDE the coin's own outline but inside
+  --     the tool overlap zone still flips the coin via Game:mousepressed.
+  local edgeCoin = Game.coins[1]
+  -- Park the test coin at a known spot away from neighbors so the nearest-
+  -- center pick is unambiguous; rebuild the coins list around it.
+  edgeCoin.x, edgeCoin.y = 400, 400
+  Game.coins = { edgeCoin }
+  local nudge  = (toolR + edgeCoin.radius) * 0.5  -- well inside overlap, well outside coin radius
+  local clickX = edgeCoin.x + edgeCoin.radius + (toolR * 0.5)
+  check(c, "7c click point is OUTSIDE coin's own outline (sanity)",
+    (clickX - edgeCoin.x) > edgeCoin.radius)
+  Game:mousepressed(clickX, edgeCoin.y, 1)
+  check(c, "7d outside-outline circle press flips the coin",
+    edgeCoin.flipping)
+  check(c, "7e outside-outline circle press sets activeCoin",
+    Game.activeCoin == edgeCoin)
+
   -- ---------- (4) Region map + circle press + power/arc curves ----------
   print("\n[4/4] Coin:regionAt + Coin:pressedBy + Coin:launch:")
   local Coin   = require("entities.coin")
@@ -272,6 +303,15 @@ function M.run()
   k = makeCoin()
   ox, oy, od = k:pressedBy(300, 600, 18)  -- 100 apart, sumR=32
   check(c, "8k pressedBy: clearly outside -> nil", ox == nil)
+
+  -- 8k.1) Grazing edge: centers EXACTLY (coin.r + toolR) apart counts as hit.
+  k = makeCoin()
+  local grazeOk = k:pressedBy(200 + 14 + 18, 600, 18)
+  check(c, "8k.1 pressedBy: grazing edge (exactly sumR apart) hits",
+    grazeOk ~= nil)
+  -- 8k.2) Just beyond -> nil.
+  check(c, "8k.2 pressedBy: 1px beyond sumR -> nil",
+    k:pressedBy(200 + 14 + 18 + 1, 600, 18) == nil)
 
   -- 8l) pressedBy: flipping/used coins are not pressable.
   k = makeCoin(); k.flipping = true
