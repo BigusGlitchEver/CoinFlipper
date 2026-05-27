@@ -48,8 +48,25 @@ local function resolveShot(item, offDist)
 end
 
 -- Tool radius is hoisted into L (rebuildLayout) so drawing and hit-testing
--- agree on the same number. Tunable: 1.3x coin radius matches the visual.
-local TOOL_R_FACTOR = 1.3
+-- agree on the same number. 2.5x coin radius (== 60px at coinR=24) makes the
+-- tool large enough that the player is consciously aiming a specific rim dot
+-- at a coin, not hovering the tool center over it.
+local TOOL_R_FACTOR = 2.5
+
+-- ---------- Rim dots (the actual coin colliders) ----------
+-- Four dots at the tool's compass points. Indices: 1=top, 2=right,
+-- 3=bottom, 4=left. Precomputed unit-vector offsets so per-frame draw and
+-- hit-test do zero allocation.
+local DOT_UX     = { 0, 1, 0, -1 }   -- cos(theta) for top/right/bottom/left
+local DOT_UY     = { -1, 0, 1, 0 }   -- sin(theta) (screen-space, +y = down)
+local DOT_R      = 6                  -- dot fill radius in pixels
+local DOT_OUTLINE = 1.5               -- dot outline width
+local DOT_COLORS = {
+  { 0xFF/255, 0x44/255, 0x44/255 },  -- top    red
+  { 0xFF/255, 0xDD/255, 0x00/255 },  -- right  yellow
+  { 0x44/255, 0xCC/255, 0x44/255 },  -- bottom green
+  { 0x33/255, 0xCC/255, 0xFF/255 },  -- left   cyan
+}
 
 local Game = {}
 
@@ -143,16 +160,32 @@ end
 
 -- ---------- Flip tool (round, follows the cursor) ----------
 
--- The tool tracks the mouse like a custom cursor. Drawn ON TOP of the coins
--- so you can see it make contact. Fill is translucent (alpha 0.5) so the
--- coin shows through where they overlap; outline stays opaque.
-local function drawToolAt(x, y)
+-- Draws the tool: large translucent grey disc + opaque rim + 4 colored dots
+-- at the compass points (the only colliders). The dot matching `activeDot`
+-- (1-4, or nil) gets a white halo so the player can see what's armed.
+local function drawToolAt(x, y, activeDot)
   local toolR = L.toolR
   lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.50)
   lg.circle("fill", x, y, toolR)
   lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 1.0)
   lg.setLineWidth(2)
   lg.circle("line", x, y, toolR)
+  -- Rim dots.
+  for d = 1, 4 do
+    local dx = x + DOT_UX[d] * toolR
+    local dy = y + DOT_UY[d] * toolR
+    local col = DOT_COLORS[d]
+    lg.setColor(col[1], col[2], col[3], 1)
+    lg.circle("fill", dx, dy, DOT_R)
+    lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 1)
+    lg.setLineWidth(DOT_OUTLINE)
+    lg.circle("line", dx, dy, DOT_R)
+    if d == activeDot then
+      lg.setColor(1, 1, 1, 0.95)
+      lg.setLineWidth(2)
+      lg.circle("line", dx, dy, DOT_R + 3)
+    end
+  end
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -203,10 +236,10 @@ end
 
 -- Live trajectory preview for the currently-hovered coin: contact dot, the
 -- resolved launch arrow at the resolved power, and a sampled arc showing the
--- z (height) lift. Authored so future coin tuning is visible at a glance.
-local function drawHoverDebug(coin, item, toolX, toolY, toolR)
-  if not coin or not item then return end
-  local offX, offY, offDist = coin:pressedBy(toolX, toolY, toolR)
+-- z (height) lift. Takes the active dot position (the actual contact point).
+local function drawHoverDebug(coin, item, dotX, dotY)
+  if not coin or not item or not dotX then return end
+  local offX, offY, offDist = coin:pressedBy(dotX, dotY)
   if not offX then return end
   local region = coin:regionAt(offX, offY, item)
   if not region then return end
@@ -240,23 +273,35 @@ end
 
 -- ---------- Press resolution ----------
 
--- Pick the live coin whose center is nearest the tool, and only if it
--- actually overlaps the tool circle. Returns nil if none qualifies.
-local function findPressedCoin(coins, tx, ty, toolR)
-  local best, bestD2 = nil, huge
-  for i = 1, #coins do
-    local coin = coins[i]
-    if not coin.flipping and not coin.used then
-      local dx = tx - coin.x
-      local dy = ty - coin.y
-      local d2 = dx * dx + dy * dy
-      local sumR = coin.radius + toolR
-      if d2 <= sumR * sumR and d2 < bestD2 then
-        best, bestD2 = coin, d2
+-- Iterate the 4 rim dots and find the (coin, dot) pair where a dot sits
+-- DEEPEST inside a live coin. "Deepest" = smallest distance from dot to coin
+-- center. Returns (coin, dotIdx, dotX, dotY) on a hit, all nil otherwise.
+-- This is the only contact path now -- the old tool-circle-vs-coin overlap is
+-- gone. Tool center over a coin with no dot inside it = no flip.
+local function findPressedCoin(coins, toolX, toolY, toolR)
+  local bestCoin, bestDot
+  local bestD2 = huge
+  for d = 1, 4 do
+    local dx_dot = toolX + DOT_UX[d] * toolR
+    local dy_dot = toolY + DOT_UY[d] * toolR
+    for i = 1, #coins do
+      local coin = coins[i]
+      if not coin.flipping and not coin.used then
+        local dx = dx_dot - coin.x
+        local dy = dy_dot - coin.y
+        local d2 = dx * dx + dy * dy
+        local r2 = coin.radius * coin.radius
+        if d2 < r2 and d2 < bestD2 then
+          bestCoin, bestDot = coin, d
+          bestD2 = d2
+        end
       end
     end
   end
-  return best
+  if not bestCoin then return nil end
+  return bestCoin, bestDot,
+         toolX + DOT_UX[bestDot] * toolR,
+         toolY + DOT_UY[bestDot] * toolR
 end
 
 -- ---------- Flip resolution ----------
@@ -314,7 +359,10 @@ function Game:enter(prev, houseName)
   self.activeCoinItem = Items.byId("coin")
   self.coins          = scatterCoins(COINS_PER_FLOOR, self.activeCoinItem)
   self.activeCoin     = nil  -- the one currently in flight, or nil
-  self.hoveredCoin    = nil  -- nearest pressable coin under the tool
+  self.hoveredCoin    = nil  -- coin a rim dot is currently inside, if any
+  self.hoveredDotIdx  = nil  -- 1..4 (top/right/bottom/left) or nil
+  self.hoveredDotX    = nil  -- screen position of the active dot
+  self.hoveredDotY    = nil
   -- Tool follows the mouse; initialize to current cursor so it doesn't pop in.
   self.toolX, self.toolY = lm.getPosition()
   self.debugRegions = self.debugRegions or false
@@ -331,10 +379,15 @@ end
 function Game:update(dt)
   -- Sample cursor once per frame; stored on self -- no per-frame allocation.
   self.toolX, self.toolY = lm.getPosition()
-  -- Cache the coin currently under the tool for the debug overlay. The actual
-  -- press in mousepressed re-runs this query at click time (so we don't rely
-  -- on a one-frame-stale answer for gameplay).
-  self.hoveredCoin = findPressedCoin(self.coins, self.toolX, self.toolY, L.toolR)
+  -- Cache which rim dot (if any) is currently inside a coin -- drives the
+  -- dot highlight and the debug overlay. Mousepressed re-runs this so we
+  -- don't depend on a one-frame-stale answer for gameplay.
+  local coin, dotIdx, dotX, dotY =
+    findPressedCoin(self.coins, self.toolX, self.toolY, L.toolR)
+  self.hoveredCoin   = coin
+  self.hoveredDotIdx = dotIdx
+  self.hoveredDotX   = dotX
+  self.hoveredDotY   = dotY
   for i = 1, #self.coins do self.coins[i]:update(dt) end
   if self.activeCoin and not self.activeCoin.flipping then
     self.activeCoin = nil
@@ -384,8 +437,9 @@ function Game:draw()
   drawHighlightFor(self.hoveredCoin)
 
   -- Flip tool follows the cursor. Drawn ON TOP of the coins so you can see
-  -- it make contact (translucent fill lets the coin show through).
-  drawToolAt(self.toolX, self.toolY)
+  -- it make contact (translucent fill lets the coin show through). The
+  -- active dot (if any) gets a white halo to show which collider is armed.
+  drawToolAt(self.toolX, self.toolY, self.hoveredDotIdx)
 
   -- Region debug overlay (press 'd' to toggle). On top of everything.
   if self.debugRegions then
@@ -393,7 +447,7 @@ function Game:draw()
       drawRegionDebug(self.coins[i], self.activeCoinItem)
     end
     drawHoverDebug(self.hoveredCoin, self.activeCoinItem,
-                   self.toolX, self.toolY, L.toolR)
+                   self.hoveredDotX, self.hoveredDotY)
   end
 
   -- Bottom hint (temporary; replaced when the run/shop flow lands).
@@ -410,13 +464,13 @@ function Game:mousepressed(x, y, button)
   if self.activeCoin then return end                 -- one flip at a time
   local item  = self.activeCoinItem
   local toolR = L.toolR
-  -- Tool circle centered at the click. Pick the nearest live coin it overlaps.
-  local coin = findPressedCoin(self.coins, x, y, toolR)
+  -- Find the deepest rim-dot-vs-coin contact at the click position. If no
+  -- dot is inside any coin, the click is ignored entirely (no center fallback).
+  local coin, _dotIdx, dotX, dotY = findPressedCoin(self.coins, x, y, toolR)
   if not coin then return end
-  -- Contact offset in coin-local normalized space, clamped to the unit disc
-  -- (so a tool sitting outside the coin's outline still maps onto its edge).
-  local offX, offY, offDist = coin:pressedBy(x, y, toolR)
-  if not offX then return end                        -- defensive; shouldn't happen
+  -- Contact offset comes from the ACTIVE DOT position, not the click point.
+  local offX, offY, offDist = coin:pressedBy(dotX, dotY)
+  if not offX then return end                        -- defensive
   local region = coin:regionAt(offX, offY, item)
   -- Two-zone resolution. Per-region overrides still take precedence so future
   -- coin types can author wild trajectories without touching this logic.

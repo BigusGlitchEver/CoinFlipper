@@ -7,7 +7,7 @@
 -- Public API:
 --   Coin(x, y, radius)                       constructor
 --   :contains(px, py)                        point-in-coin hit test (tests/UI)
---   :pressedBy(toolX, toolY, toolR)          circle-vs-coin overlap test
+--   :pressedBy(px, py)                       point-in-coin contact test
 --   :regionAt(localX, localY, item)          pick the collision region
 --   :launch(angle, power, arc, item, cb)     instant launch (deterministic)
 --   :update(dt), :draw()
@@ -70,24 +70,22 @@ function Coin:contains(px, py)
   return (dx * dx + dy * dy) <= (self.radius * self.radius)
 end
 
--- Circle-vs-coin overlap test. The tool circle is centered at (toolX, toolY)
--- with radius toolR; the coin is overlapped when their centers are within
--- coin.radius + toolR. The tool can sit OUTSIDE the coin's own outline and
--- still press it -- the contact offset is then clamped to the unit disc,
--- mapping the contact onto the coin's surface.
+-- Point-in-coin contact test. (px, py) is a single screen point -- typically
+-- one of the tool's 4 rim dots, resolved upstream. Returns the contact in
+-- coin-local normalized space (coin spans -1..1) when the point is strictly
+-- inside the coin's radius, else nil. Flipping/used coins are not contactable.
 --
 -- Returns: offX, offY, offDist
---   (each in coin-local normalized space; offDist in [0, 1], 0 = center, 1 = edge)
--- Or nil if no overlap or coin is not flippable.
-function Coin:pressedBy(toolX, toolY, toolR)
+--   each in coin-local normalized space; offDist in [0, 1], 0 = center, 1 = edge.
+-- The clamp protects against floating-point drift at the boundary.
+function Coin:pressedBy(px, py)
   if self.flipping or self.used then return nil end
-  local dx = toolX - self.x
-  local dy = toolY - self.y
-  local sumR = self.radius + toolR
-  if (dx * dx + dy * dy) > (sumR * sumR) then return nil end
-  -- Contact in coin-local normalized space (coin spans -1..1).
-  local offX = dx / self.radius
-  local offY = dy / self.radius
+  local dx = px - self.x
+  local dy = py - self.y
+  local r  = self.radius
+  if (dx * dx + dy * dy) >= (r * r) then return nil end
+  local offX = dx / r
+  local offY = dy / r
   local mag  = sqrt(offX * offX + offY * offY)
   if mag > 1 then
     local s = 1 / mag

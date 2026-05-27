@@ -152,23 +152,24 @@ function M.run()
   Game:mousepressed(1, 1, 1)
   check(c, "6b tap off any coin: no active",  Game.activeCoin == nil)
 
-  -- Tap on a coin -> it becomes the active flipping coin.
+  -- Place the tool so its TOP rim dot lands on the coin's exact center.
+  -- Top dot is at (clickX, clickY - toolR), so click at (coin.x, coin.y + toolR).
   local firstCoin = Game.coins[1]
-  Game:mousepressed(firstCoin.x, firstCoin.y, 1)
-  check(c, "6c tap on coin: it flips",        firstCoin.flipping)
-  check(c, "6d activeCoin == that coin",      Game.activeCoin == firstCoin)
-  -- Center tap -> center region -> fly straight UP at base_power pixels.
-  -- Verify the launch direction came from the region, not from any auto-aim.
-  check(c, "6e center tap launches straight up",
+  local toolR     = L.toolR
+  Game:mousepressed(firstCoin.x, firstCoin.y + toolR, 1)
+  check(c, "6c top dot on coin center: it flips",  firstCoin.flipping)
+  check(c, "6d activeCoin == that coin",           Game.activeCoin == firstCoin)
+  -- Dot at coin center -> center region -> fly straight UP.
+  check(c, "6e center contact launches straight up",
     math.abs(firstCoin.targetX - firstCoin.x) < 1e-6
     and firstCoin.targetY < firstCoin.y)
 
-  -- While a coin is in flight, tapping another coin should do nothing.
+  -- While a coin is in flight, contacting another coin should do nothing.
   if #Game.coins >= 2 then
     local secondCoin = Game.coins[2]
-    Game:mousepressed(secondCoin.x, secondCoin.y, 1)
-    check(c, "6f tap during flight: ignored", not secondCoin.flipping)
-    check(c, "6g activeCoin unchanged",       Game.activeCoin == firstCoin)
+    Game:mousepressed(secondCoin.x, secondCoin.y + toolR, 1)
+    check(c, "6f contact during flight: ignored", not secondCoin.flipping)
+    check(c, "6g activeCoin unchanged",           Game.activeCoin == firstCoin)
   end
 
   -- Tick time forward past the flight duration to let it land.
@@ -185,36 +186,58 @@ function M.run()
   check(c, "6k contains() is inverse of used",
     firstCoin:contains(firstCoin.x, firstCoin.y) == (not firstCoin.used))
 
-  -- 7: Tool circle IS the collider. A left-click while ANY part of the grey
-  --    circle touches a coin must flip that coin -- even if the click point
-  --    itself is outside the coin's own outline.
+  -- 7: 4-dot collider model. Only a rim dot landing INSIDE a coin's radius
+  --    fires a flip. Tool center over a coin with no dot inside does nothing.
   Game:enter(nil, "Grandma")
-  local toolR  = Game._L.toolR
+  local toolR2 = Game._L.toolR
   local Coin   = require("entities.coin")
-  -- 7a) Direct test of the helper: grazing edge (centers exactly sumR apart)
-  --     counts as a hit, just beyond counts as a miss.
-  local lone   = { Coin(400, 400, 14) }
-  local grazeX = 400 + 14 + toolR        -- centers exactly coin.r + toolR apart
-  check(c, "7a findPressedCoin: grazing edge (exactly sumR apart) hits",
-    Game._findPressedCoin(lone, grazeX, 400, toolR) == lone[1])
-  check(c, "7b findPressedCoin: 1px beyond sumR -> nil",
-    Game._findPressedCoin(lone, grazeX + 1, 400, toolR) == nil)
-  -- 7c) End-to-end: click position OUTSIDE the coin's own outline but inside
-  --     the tool overlap zone still flips the coin via Game:mousepressed.
+
+  -- 7a) findPressedCoin: top dot lands inside coin -> hit returned, dotIdx=1.
+  --     Tool centered at (400, 400 + toolR - 1) -> top dot at (400, 401),
+  --     well inside the coin at (400, 400, r=14).
+  local lone = { Coin(400, 400, 14) }
+  local hitCoin, hitDot = Game._findPressedCoin(lone, 400, 400 + toolR2 - 1, toolR2)
+  check(c, "7a top dot inside coin -> hit, dotIdx=1 (top)",
+    hitCoin == lone[1] and hitDot == 1)
+
+  -- 7b) Tool CENTER directly over coin with NO dot inside -> nil. With the
+  --     new 2.5x toolR, all 4 dots sit ~60px from tool center, far outside
+  --     a 14-radius coin.
+  local centerOver = Game._findPressedCoin(lone, 400, 400, toolR2)
+  check(c, "7b tool center over coin but every dot far outside -> nil",
+    centerOver == nil)
+
+  -- 7c) Deepest-dot wins. Build a contrived geometry where two dots are both
+  --     inside the same coin; the closer one to coin center wins. Use a
+  --     custom toolR small enough to fit multiple dots in a single coin.
+  local syn = { Coin(400, 400, 14) }
+  -- toolR=8: with tool at (400, 404), top dot at (400, 396) -> distance 4;
+  -- bottom dot at (400, 412) -> distance 12. Top is deeper. Both inside R=14.
+  local deepCoin, deepDot =
+    Game._findPressedCoin(syn, 400, 404, 8)
+  check(c, "7c deeper dot wins when multiple dots inside one coin",
+    deepCoin == syn[1] and deepDot == 1)
+
+  -- 7d) End-to-end: a dot-inside-coin click flips via Game:mousepressed.
+  Game:enter(nil, "Grandma")
   local edgeCoin = Game.coins[1]
-  -- Park the test coin at a known spot away from neighbors so the nearest-
-  -- center pick is unambiguous; rebuild the coins list around it.
   edgeCoin.x, edgeCoin.y = 400, 400
   Game.coins = { edgeCoin }
-  local nudge  = (toolR + edgeCoin.radius) * 0.5  -- well inside overlap, well outside coin radius
-  local clickX = edgeCoin.x + edgeCoin.radius + (toolR * 0.5)
-  check(c, "7c click point is OUTSIDE coin's own outline (sanity)",
-    (clickX - edgeCoin.x) > edgeCoin.radius)
-  Game:mousepressed(clickX, edgeCoin.y, 1)
-  check(c, "7d outside-outline circle press flips the coin",
-    edgeCoin.flipping)
-  check(c, "7e outside-outline circle press sets activeCoin",
+  -- Click at (400, 400 + toolR - 1) -> top dot lands inside edgeCoin.
+  Game:mousepressed(400, 400 + toolR2 - 1, 1)
+  check(c, "7d dot-inside-coin click flips the coin", edgeCoin.flipping)
+  check(c, "7e dot-inside-coin click sets activeCoin",
     Game.activeCoin == edgeCoin)
+
+  -- 7f) Click with NO dot inside any coin does nothing. Tool center directly
+  --     over the coin (all dots ~60px away from coin center): no flip.
+  Game:enter(nil, "Grandma")
+  local lonely = Game.coins[1]
+  lonely.x, lonely.y = 400, 400
+  Game.coins = { lonely }
+  Game:mousepressed(400, 400, 1)
+  check(c, "7f tool center over coin (no dot inside) does NOT flip",
+    not lonely.flipping and Game.activeCoin == nil)
 
   -- ---------- (4) Region map + circle press + power/arc curves ----------
   print("\n[4/4] Coin:regionAt + Coin:pressedBy + Coin:launch:")
@@ -284,44 +307,41 @@ function M.run()
   check(c, "8g out-of-disc tap clamps to a valid region (left direction)",
     r and approxEq(r.angle, pi))
 
-  -- 8h) pressedBy: direct hit registers, returns center offset.
+  -- 8h) pressedBy: point at coin center -> offDist == 0.
   k = makeCoin()
-  local ox, oy, od = k:pressedBy(200, 600, 18)
-  check(c, "8h pressedBy dead-center: offDist == 0",
-    ox and od and approxEq(od, 0))
+  local ox, oy, od = k:pressedBy(200, 600)
+  check(c, "8h pressedBy at center: offDist == 0",
+    ox and approxEq(od, 0))
 
-  -- 8i) pressedBy: tool OUTSIDE the coin's own radius but overlapping still
-  -- registers a press (the whole point of the new circle test).
-  -- Coin at (200, 600) r=14; tool at (220, 600) r=18 -> centers 20 apart,
-  -- sumR = 32, so they overlap. The tool sits 6px outside the coin's outline.
+  -- 8i) pressedBy: point inside coin off-center -> valid (offX, offY, offDist).
+  --     7px right of center, R=14 -> offX=0.5, offY=0, offDist=0.5.
   k = makeCoin()
-  ox, oy, od = k:pressedBy(220, 600, 18)
-  check(c, "8i pressedBy: tool outside coin radius still registers (overlap)",
-    ox ~= nil)
+  ox, oy, od = k:pressedBy(207, 600)
+  check(c, "8i pressedBy off-center inside: returns (0.5, 0, 0.5)",
+    ox and approxEq(ox, 0.5) and approxEq(oy, 0) and approxEq(od, 0.5))
 
-  -- 8j) Clamp: when the tool is outside the coin outline, offDist saturates at 1.
-  check(c, "8j pressedBy: outside-outline contact clamps offDist to 1",
-    od and approxEq(od, 1))
-
-  -- 8k) pressedBy: no overlap -> nil.
+  -- 8j) pressedBy clearly outside the coin -> nil.
   k = makeCoin()
-  ox, oy, od = k:pressedBy(300, 600, 18)  -- 100 apart, sumR=32
-  check(c, "8k pressedBy: clearly outside -> nil", ox == nil)
+  check(c, "8j pressedBy outside coin -> nil",
+    k:pressedBy(220, 600) == nil)
 
-  -- 8k.1) Grazing edge: centers EXACTLY (coin.r + toolR) apart counts as hit.
+  -- 8k) pressedBy at the EXACT edge (d^2 == r^2) -> nil (strict less-than).
   k = makeCoin()
-  local grazeOk = k:pressedBy(200 + 14 + 18, 600, 18)
-  check(c, "8k.1 pressedBy: grazing edge (exactly sumR apart) hits",
-    grazeOk ~= nil)
-  -- 8k.2) Just beyond -> nil.
-  check(c, "8k.2 pressedBy: 1px beyond sumR -> nil",
-    k:pressedBy(200 + 14 + 18 + 1, 600, 18) == nil)
+  check(c, "8k pressedBy at exact edge -> nil",
+    k:pressedBy(214, 600) == nil)
 
-  -- 8l) pressedBy: flipping/used coins are not pressable.
+  -- 8k.1) Just inside the edge -> hit, offDist near 1.
+  k = makeCoin()
+  ox, oy, od = k:pressedBy(213.5, 600)
+  check(c, "8k.1 pressedBy just inside edge -> hit, offDist near 1",
+    ox and od and od < 1 and od > 0.95)
+
+  -- 8l) pressedBy on a flipping coin -> nil.
   k = makeCoin(); k.flipping = true
-  check(c, "8l pressedBy: flipping coin -> nil", k:pressedBy(200, 600, 18) == nil)
+  check(c, "8l pressedBy flipping coin -> nil", k:pressedBy(200, 600) == nil)
+  -- 8m) pressedBy on a used coin -> nil.
   k = makeCoin(); k.used = true
-  check(c, "8m pressedBy: used coin -> nil",     k:pressedBy(200, 600, 18) == nil)
+  check(c, "8m pressedBy used coin -> nil",     k:pressedBy(200, 600) == nil)
 
   -- 8n) launch(angle, power, arc, item, cb) lands at coin + (cos*power, sin*power).
   k = makeCoin()
