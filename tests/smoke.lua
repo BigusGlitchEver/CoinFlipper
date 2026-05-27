@@ -186,58 +186,121 @@ function M.run()
   check(c, "6k contains() is inverse of used",
     firstCoin:contains(firstCoin.x, firstCoin.y) == (not firstCoin.used))
 
-  -- 7: 4-dot collider model. Only a rim dot landing INSIDE a coin's radius
-  --    fires a flip. Tool center over a coin with no dot inside does nothing.
+  -- 7: 4-dot collider + auto-arm vs conflict resolution.
+  --    Single dot inside -> auto-arm (click fires). 2+ dots inside the SAME
+  --    coin -> conflict (click does nothing until matching WASD key pressed).
   Game:enter(nil, "Grandma")
   local toolR2 = Game._L.toolR
   local Coin   = require("entities.coin")
+  -- Scratch table the new findPressedCoin signature requires.
+  local scratchConflict = { false, false, false, false }
 
-  -- 7a) findPressedCoin: top dot lands inside coin -> hit returned, dotIdx=1.
-  --     Tool centered at (400, 400 + toolR - 1) -> top dot at (400, 401),
-  --     well inside the coin at (400, 400, r=14).
+  -- 7a) Single dot inside coin -> hit returned with that dotIdx.
+  --     Tool at (400, 400 + toolR - 1) -> top dot at (400, 401), inside coin.
   local lone = { Coin(400, 400, 14) }
-  local hitCoin, hitDot = Game._findPressedCoin(lone, 400, 400 + toolR2 - 1, toolR2)
-  check(c, "7a top dot inside coin -> hit, dotIdx=1 (top)",
+  local hitCoin, hitDot = Game._findPressedCoin(
+    lone, 400, 400 + toolR2 - 1, toolR2, scratchConflict)
+  check(c, "7a single dot inside coin -> auto-arm, dotIdx=1 (top)",
     hitCoin == lone[1] and hitDot == 1)
 
-  -- 7b) Tool CENTER directly over coin with NO dot inside -> nil. With the
-  --     new 2.5x toolR, all 4 dots sit ~60px from tool center, far outside
-  --     a 14-radius coin.
-  local centerOver = Game._findPressedCoin(lone, 400, 400, toolR2)
+  -- 7b) Tool CENTER directly over coin with NO dot inside -> nil.
+  local centerOver = Game._findPressedCoin(lone, 400, 400, toolR2, scratchConflict)
   check(c, "7b tool center over coin but every dot far outside -> nil",
     centerOver == nil)
 
-  -- 7c) Deepest-dot wins. Build a contrived geometry where two dots are both
-  --     inside the same coin; the closer one to coin center wins. Use a
-  --     custom toolR small enough to fit multiple dots in a single coin.
-  local syn = { Coin(400, 400, 14) }
-  -- toolR=8: with tool at (400, 404), top dot at (400, 396) -> distance 4;
-  -- bottom dot at (400, 412) -> distance 12. Top is deeper. Both inside R=14.
-  local deepCoin, deepDot =
-    Game._findPressedCoin(syn, 400, 404, 8)
-  check(c, "7c deeper dot wins when multiple dots inside one coin",
-    deepCoin == syn[1] and deepDot == 1)
+  -- 7c) 2-dot conflict: with the production toolR=60 and a 45-radius coin
+  --     placed at (toolX + 30, toolY - 30), both top and right dots fall
+  --     inside (each ~42.4px from coin center, < 45). bottom/left ~94.9 out.
+  --     Result: coin returned, dotIdx == nil, conflictDots[1] and [2] set.
+  local conflicted = { Coin(430, 370, 45) }
+  local cCoin, cDot = Game._findPressedCoin(
+    conflicted, 400, 400, toolR2, scratchConflict)
+  check(c, "7c conflict: coin returned, dotIdx == nil (no auto-arm)",
+    cCoin == conflicted[1] and cDot == nil)
+  check(c, "7d conflict: top + right dots flagged, bottom + left not",
+    scratchConflict[1] == true  and scratchConflict[2] == true
+    and scratchConflict[3] == false and scratchConflict[4] == false)
 
-  -- 7d) End-to-end: a dot-inside-coin click flips via Game:mousepressed.
+  -- 7e) End-to-end auto-arm: single-dot click flips.
   Game:enter(nil, "Grandma")
   local edgeCoin = Game.coins[1]
-  edgeCoin.x, edgeCoin.y = 400, 400
+  edgeCoin.x, edgeCoin.y, edgeCoin.radius = 400, 400, 14
   Game.coins = { edgeCoin }
-  -- Click at (400, 400 + toolR - 1) -> top dot lands inside edgeCoin.
   Game:mousepressed(400, 400 + toolR2 - 1, 1)
-  check(c, "7d dot-inside-coin click flips the coin", edgeCoin.flipping)
-  check(c, "7e dot-inside-coin click sets activeCoin",
+  check(c, "7e single-dot click flips the coin", edgeCoin.flipping)
+  check(c, "7f single-dot click sets activeCoin",
     Game.activeCoin == edgeCoin)
 
-  -- 7f) Click with NO dot inside any coin does nothing. Tool center directly
-  --     over the coin (all dots ~60px away from coin center): no flip.
+  -- 7g) Click with NO dot inside any coin does nothing.
   Game:enter(nil, "Grandma")
   local lonely = Game.coins[1]
-  lonely.x, lonely.y = 400, 400
+  lonely.x, lonely.y, lonely.radius = 400, 400, 14
   Game.coins = { lonely }
   Game:mousepressed(400, 400, 1)
-  check(c, "7f tool center over coin (no dot inside) does NOT flip",
+  check(c, "7g tool center over coin (no dot inside) does NOT flip",
     not lonely.flipping and Game.activeCoin == nil)
+
+  -- 7h) End-to-end conflict: a click that produces 2-dot contact does NOT
+  --     fire. State (hoveredCoin + conflictDots) is populated for WASD.
+  Game:enter(nil, "Grandma")
+  local conCoin = Game.coins[1]
+  conCoin.x, conCoin.y, conCoin.radius = 430, 370, 45
+  Game.coins = { conCoin }
+  Game:mousepressed(400, 400, 1)
+  check(c, "7h conflict click: NOT flipped",
+    not conCoin.flipping and Game.activeCoin == nil)
+  check(c, "7i conflict click: state recorded (hoveredCoin set, no auto-arm)",
+    Game.hoveredCoin == conCoin and Game.hoveredDotIdx == nil)
+  check(c, "7j conflict click: conflictDots[1]+[2] set",
+    Game.conflictDots[1] and Game.conflictDots[2])
+
+  -- 7k) Non-matching WASD key (S = bottom = 3, not in conflict set) does nothing.
+  Game:keypressed("s")
+  check(c, "7k WASD non-matching key (S): no flip",
+    not conCoin.flipping and Game.activeCoin == nil)
+
+  -- 7l) Non-WASD key (e.g. 'r' resets state; we use 'q' which is unbound).
+  Game:keypressed("q")
+  check(c, "7l unbound key: no flip", not conCoin.flipping)
+
+  -- 7m) Matching WASD key (W = top = 1, in conflict set) fires the coin.
+  Game:keypressed("w")
+  check(c, "7m WASD W matches conflictDots[1]: flips coin",
+    conCoin.flipping and Game.activeCoin == conCoin)
+
+  -- 7n) WASD outside any conflict is ignored entirely (no auto-fire).
+  Game:enter(nil, "Grandma")
+  local stillCoin = Game.coins[1]
+  stillCoin.x, stillCoin.y, stillCoin.radius = 400, 400, 14
+  Game.coins = { stillCoin }
+  -- Tool parked far away -> no hover, no conflict.
+  Game.toolX, Game.toolY = 50, 50
+  Game:_refreshHover()
+  check(c, "7n far-away tool: no hover, no conflict",
+    Game.hoveredCoin == nil and Game.conflictDots[1] == false
+    and Game.conflictDots[2] == false)
+  Game:keypressed("w"); Game:keypressed("a")
+  Game:keypressed("s"); Game:keypressed("d")
+  check(c, "7o WASD outside conflict: nothing happens",
+    not stillCoin.flipping and Game.activeCoin == nil)
+
+  -- 7p) Conflict that EVAPORATES (tool moves away) clears without firing.
+  Game:enter(nil, "Grandma")
+  local moveCoin = Game.coins[1]
+  moveCoin.x, moveCoin.y, moveCoin.radius = 430, 370, 45
+  Game.coins = { moveCoin }
+  Game.toolX, Game.toolY = 400, 400
+  Game:_refreshHover()
+  check(c, "7p mid-step: in conflict before move",
+    Game.hoveredCoin == moveCoin and Game.hoveredDotIdx == nil
+    and Game.conflictDots[1] and Game.conflictDots[2])
+  -- Move tool far away; conflict should disappear.
+  Game.toolX, Game.toolY = 50, 50
+  Game:_refreshHover()
+  check(c, "7q after move: conflict cleared, no auto-fire",
+    Game.hoveredCoin == nil
+    and Game.conflictDots[1] == false and Game.conflictDots[2] == false
+    and not moveCoin.flipping)
 
   -- ---------- (4) Region map + circle press + power/arc curves ----------
   print("\n[4/4] Coin:regionAt + Coin:pressedBy + Coin:launch:")
