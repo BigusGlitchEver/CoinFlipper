@@ -54,7 +54,7 @@ end
 -- agree on the same number. 0.5x coin radius (== 12px at coinR=24) makes the
 -- tool compact -- the player aims precisely with the rim dots, which scale
 -- with toolR so the whole assembly shrinks together.
-local TOOL_R_FACTOR = 0.5
+local TOOL_R_FACTOR = 1.5
 
 -- ---------- Rim dots (the actual coin colliders) ----------
 -- SIX dots evenly spaced at 60 deg, starting at 270 deg (top) and going
