@@ -18,6 +18,7 @@
 local StateMachine = require("statemachine")
 local Coin         = require("entities.coin")
 local Items        = require("data.flip_items")
+local Tiers        = require("data.coin_tiers")
 
 local lg    = love.graphics
 local lm    = love.mouse
@@ -29,6 +30,7 @@ local cos   = math.cos
 local sin   = math.sin
 local pi    = math.pi
 local huge  = math.huge
+local floor = math.floor
 
 -- Tiny helper: linear interpolation in [0, 1].
 local function lerp(a, b, t) return a + (b - a) * t end
@@ -49,10 +51,10 @@ local function resolveShot(item, offDist)
 end
 
 -- Tool radius is hoisted into L (rebuildLayout) so drawing and hit-testing
--- agree on the same number. 2.5x coin radius (== 60px at coinR=24) makes the
--- tool large enough that the player is consciously aiming a specific rim dot
--- at a coin, not hovering the tool center over it.
-local TOOL_R_FACTOR = 2.5
+-- agree on the same number. 0.5x coin radius (== 12px at coinR=24) makes the
+-- tool compact -- the player aims precisely with the rim dots, which scale
+-- with toolR so the whole assembly shrinks together.
+local TOOL_R_FACTOR = 0.5
 
 -- ---------- Rim dots (the actual coin colliders) ----------
 -- SIX dots evenly spaced at 60 deg, starting at 270 deg (top) and going
@@ -433,23 +435,27 @@ end
 -- ---------- Flip resolution ----------
 
 -- 4-tier landing resolution. Pure logic; exposed as Game._resolveFlip for tests.
-local function resolveFlip(self, landingX, landingY)
+-- The coin parameter is used for tier-based degradation:
+--   * Scoring hits apply Tiers[tier+1].mult to the zone points (min 1).
+--   * Missed flips bump coin.tier by 1, capped at 3. Tier never resets.
+local function resolveFlip(self, coin, landingX, landingY)
   local dx = landingX - L.targetCX
   local dy = landingY - L.targetCY
   local d2 = dx * dx + dy * dy
+  local tierMult = Tiers[(coin.tier or 0) + 1].mult
 
   if d2 <= L.bullR * L.bullR then
-    local gain = POINTS.bull * self.multiplier
+    local gain = max(1, floor(POINTS.bull * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "bull", gain
   elseif d2 <= L.middleR * L.middleR then
-    local gain = POINTS.middle * self.multiplier
+    local gain = max(1, floor(POINTS.middle * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "middle", gain
   elseif d2 <= L.outerR * L.outerR then
-    local gain = POINTS.outer * self.multiplier
+    local gain = max(1, floor(POINTS.outer * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "outer", gain
@@ -461,10 +467,12 @@ local function resolveFlip(self, landingX, landingY)
     landingY >= L.boardY and landingY <= L.boardY + L.boardH
 
   if onBoard then
-    -- Wasted shot: no points, no chain change. Survivable.
+    -- Wasted shot: no points, no chain change. Survivable but degrades.
+    if coin.tier < 3 then coin.tier = coin.tier + 1 end
     return "on_board_miss", 0
   else
-    -- Full miss: chain resets, no points.
+    -- Full miss: chain resets, no points, also degrades.
+    if coin.tier < 3 then coin.tier = coin.tier + 1 end
     self.multiplier = 1
     return "off_board_miss", 0
   end
@@ -485,10 +493,11 @@ local function fireFlip(self, coin, dotX, dotY)
     if region.arc   then arc   = region.arc   end
   end
   coin:launch(angle, power, arc, item, function(lx, ly)
-    local zone, _ = resolveFlip(self, lx, ly)
+    local zone, _ = resolveFlip(self, coin, lx, ly)
     if zone == "bull" or zone == "middle" or zone == "outer" then
-      coin.used = true
+      coin.used = true  -- scoring hits retire the coin at its current tier
     end
+    -- Tier mutation on misses is handled inside resolveFlip.
   end)
   self.activeCoin = coin
 end

@@ -37,6 +37,7 @@ local SOURCES = {
   "data/buildings.lua",
   "data/cards.lua",
   "data/flip_items.lua",
+  "data/coin_tiers.lua",
   "helpers/probability.lua",
 }
 
@@ -103,10 +104,15 @@ function M.run()
 
   -- 5: 4-tier ring resolution against synthetic landings.
   --    We poke marbles/multiplier directly via the exposed _resolveFlip.
+  --    The 2nd arg is the coin (used for tier multiplier + degradation).
+  --    Use a fresh tier-0 coin so each scoring assertion matches the old
+  --    pre-degradation behavior (tier 0 mult = 1.0).
+  local CoinClass = require("entities.coin")
+  local sCoin     = CoinClass(0, 0, 14)  -- tier 0
   Game.marbles, Game.multiplier = 0, 1
 
   -- 5a) Bullseye: dead center of target.
-  local ring, gain = Game._resolveFlip(Game, L.targetCX, L.targetCY)
+  local ring, gain = Game._resolveFlip(Game, sCoin, L.targetCX, L.targetCY)
   check(c, "5a bullseye ring detected",     ring == "bull",   "ring=" .. ring)
   check(c, "5b bullseye gain = 5*1 = 5",    gain == 5,        "gain=" .. gain)
   check(c, "5c marbles == 5",               Game.marbles == 5)
@@ -114,7 +120,7 @@ function M.run()
 
   -- 5b) Middle ring: between bullR and middleR.
   local midR = (L.bullR + L.middleR) / 2
-  ring, gain = Game._resolveFlip(Game, L.targetCX + midR, L.targetCY)
+  ring, gain = Game._resolveFlip(Game, sCoin, L.targetCX + midR, L.targetCY)
   check(c, "5e middle ring detected",       ring == "middle", "ring=" .. ring)
   check(c, "5f middle gain = 3*2 = 6",      gain == 6,        "gain=" .. gain)
   check(c, "5g marbles == 11",              Game.marbles == 11)
@@ -122,26 +128,73 @@ function M.run()
 
   -- 5c) Outer ring: between middleR and outerR.
   local outR = (L.middleR + L.outerR) / 2
-  ring, gain = Game._resolveFlip(Game, L.targetCX + outR, L.targetCY)
+  ring, gain = Game._resolveFlip(Game, sCoin, L.targetCX + outR, L.targetCY)
   check(c, "5i outer ring detected",        ring == "outer",  "ring=" .. ring)
   check(c, "5j outer gain = 1*3 = 3",       gain == 3,        "gain=" .. gain)
   check(c, "5k marbles == 14",              Game.marbles == 14)
   check(c, "5l multiplier == 4",            Game.multiplier == 4)
 
-  -- 5d) On-board but outside target: no score, no chain change.
-  --     Pick a board corner well outside the outer ring.
+  -- 5d) On-board but outside target: no score, no chain change. Tier bumps.
+  --     Use a fresh tier-0 coin so we can observe tier transitions cleanly.
+  local missCoin = CoinClass(0, 0, 14)
+  check(c, "5d.0 fresh coin starts at tier 0", missCoin.tier == 0)
   local marblesBefore, multBefore = Game.marbles, Game.multiplier
-  ring, gain = Game._resolveFlip(Game, L.boardX + 4, L.boardY + 4)
+  ring, gain = Game._resolveFlip(Game, missCoin, L.boardX + 4, L.boardY + 4)
   check(c, "5m on-board off-target detected", ring == "on_board_miss")
   check(c, "5n on-board off-target: marbles unchanged", Game.marbles == marblesBefore)
   check(c, "5o on-board off-target: mult unchanged",    Game.multiplier == multBefore)
+  check(c, "5o.1 on-board miss bumps tier to 1",        missCoin.tier == 1)
 
-  -- 5e) Off-board: chain resets, marbles unchanged.
+  -- 5e) Off-board: chain resets, marbles unchanged, tier bumps further.
   marblesBefore = Game.marbles
-  ring, gain = Game._resolveFlip(Game, -100, -100)
+  ring, gain = Game._resolveFlip(Game, missCoin, -100, -100)
   check(c, "5p off-board detected",         ring == "off_board_miss")
   check(c, "5q off-board: marbles unchanged", Game.marbles == marblesBefore)
   check(c, "5r off-board: mult reset to 1",   Game.multiplier == 1)
+  check(c, "5r.1 off-board miss bumps tier to 2", missCoin.tier == 2)
+  -- One more miss -> tier 3 (cap).
+  Game._resolveFlip(Game, missCoin, L.boardX + 4, L.boardY + 4)
+  check(c, "5r.2 third miss bumps tier to 3", missCoin.tier == 3)
+  -- Further misses must NOT exceed 3.
+  Game._resolveFlip(Game, missCoin, L.boardX + 4, L.boardY + 4)
+  Game._resolveFlip(Game, missCoin, -100, -100)
+  check(c, "5r.3 tier caps at 3 (no overflow)", missCoin.tier == 3)
+
+  -- 5f) Tier-aware scoring: tier-2 coin (mult 0.50) hitting bull at chain=1
+  --     should produce floor(5 * 0.5 * 1) = 2.
+  local t2Coin = CoinClass(0, 0, 14)
+  t2Coin.tier = 2
+  Game.marbles, Game.multiplier = 0, 1
+  ring, gain = Game._resolveFlip(Game, t2Coin, L.targetCX, L.targetCY)
+  check(c, "5s tier-2 bull at chain=1: gain == floor(5*0.5*1) == 2",
+    ring == "bull" and gain == 2,
+    "gain=" .. gain)
+
+  -- 5g) Tier-2 bull at chain=3 -> floor(5 * 0.5 * 3) = 7.
+  t2Coin.tier = 2
+  Game.marbles, Game.multiplier = 0, 3
+  ring, gain = Game._resolveFlip(Game, t2Coin, L.targetCX, L.targetCY)
+  check(c, "5t tier-2 bull at chain=3: gain == floor(5*0.5*3) == 7",
+    ring == "bull" and gain == 7,
+    "gain=" .. gain)
+
+  -- 5h) Min-1 floor: tier-3 coin (mult 0.25) hitting OUTER (1 point) at
+  --     chain=1 -> floor(1 * 0.25 * 1) = 0, but min-1 kicks in.
+  local t3Coin = CoinClass(0, 0, 14)
+  t3Coin.tier = 3
+  Game.marbles, Game.multiplier = 0, 1
+  ring, gain = Game._resolveFlip(Game, t3Coin, L.targetCX + outR, L.targetCY)
+  check(c, "5u tier-3 outer at chain=1: min-1 floor applies (gain == 1)",
+    ring == "outer" and gain == 1,
+    "gain=" .. gain)
+
+  -- 5i) Scoring hits do NOT degrade the coin (tier stays).
+  local stayCoin = CoinClass(0, 0, 14)
+  stayCoin.tier = 1
+  Game.marbles, Game.multiplier = 0, 1
+  Game._resolveFlip(Game, stayCoin, L.targetCX, L.targetCY)
+  check(c, "5v scoring hit does NOT increment tier (stays at 1)",
+    stayCoin.tier == 1)
 
   -- 6: tap-on-coin input model.
   -- Re-enter to get a fresh scatter and clean state.
@@ -187,36 +240,37 @@ function M.run()
     firstCoin:contains(firstCoin.x, firstCoin.y) == (not firstCoin.used))
 
   -- 7: 6-dot collider + auto-arm vs A/D conflict cycling.
-  --    Single dot inside -> auto-arm (click fires). 2+ dots inside the SAME
-  --    coin -> conflict; first dot is selected by default. A/D (and arrow
-  --    keys) cycle the selection. Click fires the CURRENTLY SELECTED dot.
+  --    Geometries below use the post-halving toolR (L.coinR * 0.5 = 12px).
+  --    Single dot in coin -> auto-arm (click fires). 2+ dots in SAME coin
+  --    -> conflict; first dot selected by default; A/D (and arrow keys)
+  --    cycle the selection. Click fires the CURRENTLY SELECTED dot.
   Game:enter(nil, "Grandma")
   local toolR2 = Game._L.toolR
   local Coin   = require("entities.coin")
   local scratchConflict = {}
 
-  -- 7a) Single dot inside coin -> auto-arm dot 1 (top). Coin at (400, 400)
-  --     r=14; tool at (400, 460) puts top dot at (400, 400), other 5 dots
-  --     all >= 60px away from coin center -> single hit.
+  -- 7a) Single dot inside coin. Coin (400, 400, r=14); tool at (400, 420):
+  --     top dot at (400, 408) -> dist 8 < 14 in; top-right (410.4, 414) dist
+  --     17.4 out; all others farther.
   local lone = { Coin(400, 400, 14) }
   local hitCoin, hitDot, hitCount =
-    Game._findPressedCoin(lone, 400, 460, toolR2, scratchConflict)
+    Game._findPressedCoin(lone, 400, 420, toolR2, scratchConflict)
   check(c, "7a single dot inside coin -> auto-arm, dotIdx=1 (top), count=0",
     hitCoin == lone[1] and hitDot == 1 and hitCount == 0)
 
-  -- 7b) Tool CENTER over coin with NO dot inside -> nil. All 6 dots sit ~60
-  --     from tool center, far outside a 14-radius coin.
-  local cm, cd, cc = Game._findPressedCoin(lone, 400, 400, toolR2, scratchConflict)
-  check(c, "7b tool center over coin but every dot far outside -> nil",
-    cm == nil and cd == nil and cc == 0)
+  -- 7b) Tool far from any coin -> nil. (With the new tiny tool, putting
+  --     the center directly over a coin actually drops several dots inside
+  --     it, so the previous "center over coin" test premise doesn't hold.)
+  local farAway = Game._findPressedCoin(lone, 800, 800, toolR2, scratchConflict)
+  check(c, "7b tool far from any coin -> nil", farAway == nil)
 
-  -- 7c) 2-dot conflict. With toolR=60 and a 45-radius coin at (430, 370):
-  --       top dot      at (400, 340) -> dist 42.4 < 45  ?
-  --       top-right    at (451.96, 370) -> dist 21.96 < 45 ?
-  --       (other 4 dots ~ 63.9 / 94.9 / 101.6 / 82  -- all outside)
-  local conflicted = { Coin(430, 370, 45) }
+  -- 7c) 2-dot conflict. Coin at (405, 400, r=12); tool at (400, 412):
+  --     top (400, 400) dist 5 in; top-right (410.4, 406) dist sqrt(29+36)
+  --     = 8.06 in; top-left (389.6, 406) dist sqrt(237+36) = 16.5 out;
+  --     bottom row all out.
+  local conflicted = { Coin(405, 400, 12) }
   local cCoin, cDot, cCount =
-    Game._findPressedCoin(conflicted, 400, 400, toolR2, scratchConflict)
+    Game._findPressedCoin(conflicted, 400, 412, toolR2, scratchConflict)
   check(c, "7c conflict: coin returned, dotIdx == nil, count == 2",
     cCoin == conflicted[1] and cDot == nil and cCount == 2)
   check(c, "7d conflict: list contains dots 1 (top) + 2 (top-right) in CW order",
@@ -227,7 +281,7 @@ function M.run()
   local edgeCoin = Game.coins[1]
   edgeCoin.x, edgeCoin.y, edgeCoin.radius = 400, 400, 14
   Game.coins = { edgeCoin }
-  Game:mousepressed(400, 460, 1)
+  Game:mousepressed(400, 420, 1)
   check(c, "7e single-dot click flips the coin", edgeCoin.flipping)
   check(c, "7f single-dot click sets activeCoin",
     Game.activeCoin == edgeCoin)
@@ -237,16 +291,16 @@ function M.run()
   local lonely = Game.coins[1]
   lonely.x, lonely.y, lonely.radius = 400, 400, 14
   Game.coins = { lonely }
-  Game:mousepressed(400, 400, 1)
-  check(c, "7g tool center over coin (no dot inside) does NOT flip",
+  Game:mousepressed(800, 800, 1)
+  check(c, "7g click far from any coin does NOT flip",
     not lonely.flipping and Game.activeCoin == nil)
 
-  -- 7h) Conflict state via _refreshHover (no click yet).
+  -- 7h) Conflict state via _refreshHover (no click yet). Same geometry as 7c.
   Game:enter(nil, "Grandma")
   local conCoin = Game.coins[1]
-  conCoin.x, conCoin.y, conCoin.radius = 430, 370, 45
+  conCoin.x, conCoin.y, conCoin.radius = 405, 400, 12
   Game.coins = { conCoin }
-  Game.toolX, Game.toolY = 400, 400
+  Game.toolX, Game.toolY = 400, 412
   Game:_refreshHover()
   check(c, "7h conflict established: count=2, idx=1 (default)",
     Game.conflictCount == 2 and Game.conflictIdx == 1)
@@ -273,15 +327,15 @@ function M.run()
   check(c, "7o right arrow: idx 1 -> 2", Game.conflictIdx == 2)
 
   -- 7p) Click confirms current selection (idx 2 = top-right dot).
-  --     Top-right dot at (451.96, 370). Coin at (430, 370).
-  --     offX = 21.96/45 ~= 0.488, offY = 0 -> mid-right region -> angle = pi (left).
-  --     Expected: targetX < coin.x and targetY ~= coin.y.
-  Game:mousepressed(400, 400, 1)
+  --     Top-right dot at (410.4, 406). Coin at (405, 400, r=12).
+  --     offX = (410.4 - 405)/12 = 0.45, offY = (406 - 400)/12 = 0.5
+  --     -> bottom-right region cell -> angle = -3pi/4 (up-LEFT).
+  --     Expected: targetX < coin.x and targetY < coin.y.
+  Game:mousepressed(400, 412, 1)
   check(c, "7p click fires currently selected dot (coin flipping)",
     conCoin.flipping and Game.activeCoin == conCoin)
-  check(c, "7q click used top-right dot (coin flies LEFT)",
-    conCoin.targetX < conCoin.x
-    and math.abs(conCoin.targetY - conCoin.y) < 0.5)
+  check(c, "7q click used top-right dot (coin flies UP-LEFT)",
+    conCoin.targetX < conCoin.x and conCoin.targetY < conCoin.y)
 
   -- 7r) A/D outside conflict are ignored entirely.
   Game:enter(nil, "Grandma")
@@ -300,9 +354,9 @@ function M.run()
   -- 7t) Conflict that EVAPORATES (tool moves away) clears without firing.
   Game:enter(nil, "Grandma")
   local moveCoin = Game.coins[1]
-  moveCoin.x, moveCoin.y, moveCoin.radius = 430, 370, 45
+  moveCoin.x, moveCoin.y, moveCoin.radius = 405, 400, 12
   Game.coins = { moveCoin }
-  Game.toolX, Game.toolY = 400, 400
+  Game.toolX, Game.toolY = 400, 412
   Game:_refreshHover()
   check(c, "7t mid-step: in conflict before move",
     Game.hoveredCoin == moveCoin and Game.conflictCount == 2)
@@ -316,15 +370,15 @@ function M.run()
   --     dots in the same coin should preserve the player's A/D choice.
   Game:enter(nil, "Grandma")
   local jitterCoin = Game.coins[1]
-  jitterCoin.x, jitterCoin.y, jitterCoin.radius = 430, 370, 45
+  jitterCoin.x, jitterCoin.y, jitterCoin.radius = 405, 400, 12
   Game.coins = { jitterCoin }
-  Game.toolX, Game.toolY = 400, 400
+  Game.toolX, Game.toolY = 400, 412
   Game:_refreshHover()
   Game:keypressed("d")  -- now idx=2 (top-right selected)
   check(c, "7v pre-jitter: idx == 2 (player chose top-right)",
     Game.conflictIdx == 2)
   -- Jitter the tool by 1px; same conflict dots should still be in.
-  Game.toolX, Game.toolY = 401, 400
+  Game.toolX, Game.toolY = 401, 412
   Game:_refreshHover()
   check(c, "7w post-jitter: idx STILL == 2 (selection preserved)",
     Game.conflictCount == 2 and Game.conflictIdx == 2

@@ -24,6 +24,7 @@
 -- with a 2px #333333 outline. Replaced with hand-drawn sprite later.
 
 local Object = require("lib.classic")
+local Tiers  = require("data.coin_tiers")
 
 -- Localize hot lookups per CLAUDE.md performance rules.
 local lg    = love.graphics
@@ -37,8 +38,7 @@ local Coin = Object:extend()
 
 local TUMBLE_RATE = 18
 
--- Spec colors.
-local COLOR_COIN_FILL    = { 0xF0/255, 0xC0/255, 0x40/255 }
+-- Outline stays #333333 across all tiers; fill comes from Tiers[tier+1].
 local COLOR_COIN_OUTLINE = { 0x33/255, 0x33/255, 0x33/255 }
 
 function Coin:new(x, y, radius)
@@ -59,6 +59,9 @@ function Coin:new(x, y, radius)
   self.landedCallback = nil
   -- "used" = already flipped (game state owns this flag).
   self.used = false
+  -- Degradation tier 0..3. Starts at 0 (yellow, full value). Each non-scoring
+  -- flip bumps it; capped at 3 (red, 0.25x). game.lua's resolveFlip mutates.
+  self.tier = 0
 end
 
 -- Tap-hit detection. True if (px, py) is inside the coin's radius AND the
@@ -203,7 +206,8 @@ function Coin:draw()
   end
 
   local alpha = self.used and 0.30 or 1.0
-  lg.setColor(COLOR_COIN_FILL[1], COLOR_COIN_FILL[2], COLOR_COIN_FILL[3], alpha)
+  local fill  = Tiers[(self.tier or 0) + 1].color
+  lg.setColor(fill[1], fill[2], fill[3], alpha)
   lg.ellipse("fill", self.x, self.y - self.z, self.radius * sx, self.radius)
   lg.setColor(COLOR_COIN_OUTLINE[1], COLOR_COIN_OUTLINE[2], COLOR_COIN_OUTLINE[3], alpha)
   lg.setLineWidth(2)
