@@ -35,8 +35,8 @@ local floor = math.floor
 -- Hand-drawn tool sprites. Black background PNG drawn with blend mode "add":
 -- black (0,0,0) contributes nothing to the destination, grey tints slightly,
 -- white marks pop at full brightness. Loaded once at module level.
-local spriteCircle   = love.graphics.newImage("assets/Circle.png")
-local spriteTriangle = love.graphics.newImage("assets/Triangle.png")
+local spriteCircle   = love.graphics.newImage("assets/tools/circle.png")
+local spriteTriangle = love.graphics.newImage("assets/tools/triangle.png")
 
 -- Tiny helper: linear interpolation in [0, 1].
 local function lerp(a, b, t) return a + (b - a) * t end
