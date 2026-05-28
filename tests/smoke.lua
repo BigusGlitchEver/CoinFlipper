@@ -251,14 +251,14 @@ function M.run()
   local scratchConflict = {}
   for i = 1, 6 do scratchConflict[i] = { idx = 0, coin = nil } end
 
-  -- 7a) Single dot engages coin. Coin (400, 350, r=24); tool at (400, 400),
-  --     toolR=36, grab=14. Top dot (400, 364): dist to coin = 14, reach 38,
-  --     engaged. Top-right (431.18, 382): dist sqrt(972+1024)=44.7, OUT.
-  --     All others further. -> 1 pair.
+  -- 7a) Single dot strictly INSIDE a coin's disc. Coin (400, 350, r=24);
+  --     tool at (400, 400), toolR=36. Top dot (400, 364): dist 14 < 24 IN.
+  --     Top-right (431.18, 382): dist sqrt(972+1024)=44.7 OUT. All others
+  --     even farther. -> 1 pair, auto-arm.
   local lone = { Coin(400, 350, 24) }
   local hitCount =
     Game._findPressedCoin(lone, 400, 400, toolR2, scratchConflict)
-  check(c, "7a single dot engaged -> count = 1 (auto-arm)",
+  check(c, "7a single dot inside coin -> count = 1 (auto-arm)",
     hitCount == 1)
   check(c, "7a.1 pair[1] = (dot 1 = top, lone[1])",
     scratchConflict[1].idx == 1 and scratchConflict[1].coin == lone[1])
@@ -267,11 +267,22 @@ function M.run()
   local farCount = Game._findPressedCoin(lone, 800, 800, toolR2, scratchConflict)
   check(c, "7b tool far from any coin -> count = 0", farCount == 0)
 
-  -- 7c) 2-dot conflict on the SAME coin. Coin (420, 370, r=20); tool at
-  --     (400, 400), toolR=36, reach 34. Top (400, 364) dist 20.9 < 34 in;
-  --     top-right (431.18, 382) dist sqrt(125+144)=16.4 < 34 in; all others
-  --     >= 47.8 out.
-  local conflicted = { Coin(420, 370, 20) }
+  -- 7b.1) CRITICAL: tool centered EXACTLY on a coin engages 0 dots (NOT 6).
+  --       This is the false-conflict bug we just fixed -- with strict
+  --       containment, all 6 dots sit 36 from coin center > r=24, so none
+  --       qualify. Without strict, the old grab margin pulled them all in.
+  local centered = { Coin(400, 400, 24) }
+  local centerCount =
+    Game._findPressedCoin(centered, 400, 400, toolR2, scratchConflict)
+  check(c, "7b.1 tool centered on coin -> 0 dots engaged (NOT 6)",
+    centerCount == 0)
+
+  -- 7c) 2-dot conflict on the SAME coin. Coin (416, 373, r=20) sits at the
+  --     midpoint between the top and top-right dots:
+  --       top (400, 364)        -> dist sqrt(256+81) = 18.36 < 20  IN
+  --       top-right (431.18, 382) -> dist sqrt(231+81) = 17.66 < 20  IN
+  --       (others >= 47.5 -> OUT)
+  local conflicted = { Coin(416, 373, 20) }
   local cCount =
     Game._findPressedCoin(conflicted, 400, 400, toolR2, scratchConflict)
   check(c, "7c same-coin conflict: count == 2", cCount == 2)
@@ -279,22 +290,14 @@ function M.run()
     scratchConflict[1].idx == 1 and scratchConflict[1].coin == conflicted[1]
     and scratchConflict[2].idx == 2 and scratchConflict[2].coin == conflicted[1])
 
-  -- 7d.1) Grab-zone engagement (dot OUTSIDE coin disc but within grab reach).
-  --       Coin (400, 360, r=2): top dot dist 4 > r=2 so disc test fails,
-  --       but 4 < r+grab = 16 -> engaged via grab zone.
-  local grabbed = { Coin(400, 360, 2) }
-  local gCount = Game._findPressedCoin(grabbed, 400, 400, toolR2, scratchConflict)
-  check(c, "7d.1 dot OUTSIDE disc but inside grab zone engages",
-    gCount == 1 and scratchConflict[1].idx == 1
-    and scratchConflict[1].coin == grabbed[1])
-
-  -- 7d.2) Per-dot NEAREST-coin pick: a dot near two coins claims the closer.
-  --       Top dot at (400, 364). Coin A (398, 365, r=10) dist sqrt(4+1)=2.24.
-  --       Coin B (410, 365, r=10) dist sqrt(100+1)=10.05. A is closer.
-  --       Both within reach 24, so without the nearest rule we'd get 2 pairs.
-  local twoNear = { Coin(398, 365, 10), Coin(410, 365, 10) }
+  -- 7d.2) Per-dot NEAREST-coin tie-break. With strict containment this rarely
+  --       matters (coins don't overlap in normal play), so the test uses two
+  --       synthetic overlapping coins: top dot inside BOTH, picks the closer.
+  --       coin A (400, 364, r=12) -- top dot dist 0 (deepest possible).
+  --       coin B (400, 370, r=12) -- top dot dist 6.
+  local twoNear = { Coin(400, 364, 12), Coin(400, 370, 12) }
   local nCount = Game._findPressedCoin(twoNear, 400, 400, toolR2, scratchConflict)
-  check(c, "7d.2 dot near two coins picks the CLOSER one",
+  check(c, "7d.2 dot inside two coins picks the NEAREST",
     nCount >= 1 and scratchConflict[1].idx == 1
     and scratchConflict[1].coin == twoNear[1])
 
@@ -325,11 +328,11 @@ function M.run()
   check(c, "7g click far from any coin does NOT flip",
     not lonely.flipping and Game.activeCoin == nil)
 
-  -- 7h) Same-coin conflict via _refreshHover. Coin (420, 370, r=20); tool
-  --     at (400, 400) -> top + top-right both engaged.
+  -- 7h) Same-coin conflict via _refreshHover. Coin (416, 373, r=20) at the
+  --     midpoint between top and top-right dots; tool at (400, 400).
   Game:enter(nil, "Grandma")
   local conCoin = Game.coins[1]
-  conCoin.x, conCoin.y, conCoin.radius = 420, 370, 20
+  conCoin.x, conCoin.y, conCoin.radius = 416, 373, 20
   Game.coins = { conCoin }
   Game.toolX, Game.toolY = 400, 400
   Game:_refreshHover()
@@ -359,8 +362,8 @@ function M.run()
   check(c, "7o right arrow: idx 1 -> 2", Game.conflictIdx == 2)
 
   -- 7p) Click confirms current selection (idx 2 = top-right dot).
-  --     Top-right dot at (431.18, 382). Coin (420, 370, r=20).
-  --     offX = (431.18 - 420)/20 = 0.559, offY = (382 - 370)/20 = 0.6
+  --     Top-right dot at (431.18, 382). Coin (416, 373, r=20).
+  --     offX = (431.18 - 416)/20 = 0.759, offY = (382 - 373)/20 = 0.45
   --     -> bottom-right region cell -> angle = -3pi/4 (up-LEFT).
   --     Expected: targetX < coin.x and targetY < coin.y.
   Game:mousepressed(400, 400, 1)
@@ -386,7 +389,7 @@ function M.run()
   -- 7t) Conflict that EVAPORATES (tool moves away) clears without firing.
   Game:enter(nil, "Grandma")
   local moveCoin = Game.coins[1]
-  moveCoin.x, moveCoin.y, moveCoin.radius = 420, 370, 20
+  moveCoin.x, moveCoin.y, moveCoin.radius = 416, 373, 20
   Game.coins = { moveCoin }
   Game.toolX, Game.toolY = 400, 400
   Game:_refreshHover()
@@ -402,7 +405,7 @@ function M.run()
   --     dots in the same coin should preserve the player's A/D choice.
   Game:enter(nil, "Grandma")
   local jitterCoin = Game.coins[1]
-  jitterCoin.x, jitterCoin.y, jitterCoin.radius = 420, 370, 20
+  jitterCoin.x, jitterCoin.y, jitterCoin.radius = 416, 373, 20
   Game.coins = { jitterCoin }
   Game.toolX, Game.toolY = 400, 400
   Game:_refreshHover()

@@ -160,12 +160,6 @@ local function rebuildLayout()
   L.coinR = COIN_RADIUS_AT_390W
   -- Tool size derived from coin radius. Read by drawing AND hit-testing.
   L.toolR = L.coinR * TOOL_R_FACTOR
-  -- A rim dot engages a coin when its distance from the coin's center is
-  -- under (coin.radius + grabMargin). This lets a dot "grab" a coin from
-  -- just outside its outline -- crucial for cross-coin conflict, since the
-  -- tool sitting between two adjacent coins gets a different dot to reach
-  -- toward each. Computed once per layout rebuild -- no per-frame math.
-  L.grabMargin = floor(L.coinR * 0.6)  -- ~14px at coinR=24
 end
 
 -- ---------- Coin scatter ----------
@@ -350,33 +344,32 @@ end
 
 -- ---------- Press resolution ----------
 
--- Per-dot nearest-coin resolution within the grab zone. EACH of the 6 rim
--- dots contributes AT MOST ONE pair: for that dot, find the NEAREST live
--- flippable coin whose center is within (coin.radius + L.grabMargin) of the
--- dot. A dot near two coins picks the closer one; a dot near none contributes
--- nothing. Each entry in outConflict is a preallocated {idx, coin} slot
--- mutated in place (zero per-frame allocation).
+-- Per-dot STRICT-CONTAINMENT resolution. EACH of the 6 rim dots contributes
+-- AT MOST ONE pair: for that dot, find the NEAREST live flippable coin whose
+-- disc strictly contains the dot's point (d2 < coin.radius^2). A dot inside
+-- no coin contributes nothing. Coins don't overlap so "nearest" rarely
+-- matters, but the one-pair-per-dot guarantee is preserved either way.
+-- outConflict's slots are preallocated {idx, coin} tables mutated in place.
 --
 -- Returns count only:
 --   0  -> no contact
 --   1  -> auto-arm (single pair; caller uses outConflict[1])
 --   2+ -> conflict (player cycles through outConflict[1..count] with A/D)
 local function findPressedCoin(coins, toolX, toolY, toolR, outConflict)
-  local grab  = L.grabMargin
   local count = 0
   for d = 1, 6 do
     local dxd = toolX + DOT_UX[d] * toolR
     local dyd = toolY + DOT_UY[d] * toolR
-    -- Find the closest live coin this dot can engage.
+    -- Find the closest live coin this dot is strictly INSIDE.
     local bestCoin, bestD2 = nil, huge
     for i = 1, #coins do
       local coin = coins[i]
       if not coin.flipping and not coin.used then
-        local dx    = dxd - coin.x
-        local dy    = dyd - coin.y
-        local d2    = dx * dx + dy * dy
-        local reach = coin.radius + grab
-        if d2 < (reach * reach) and d2 < bestD2 then
+        local dx = dxd - coin.x
+        local dy = dyd - coin.y
+        local d2 = dx * dx + dy * dy
+        local r  = coin.radius
+        if d2 < (r * r) and d2 < bestD2 then
           bestCoin = coin
           bestD2   = d2
         end
