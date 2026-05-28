@@ -41,6 +41,11 @@ local TUMBLE_RATE = 18
 -- Outline stays #333333 across all tiers; fill comes from Tiers[tier+1].
 local COLOR_COIN_OUTLINE = { 0x33/255, 0x33/255, 0x33/255 }
 
+-- Pre-allocated star vertex buffer for easy_coin icon (10 points = 20 floats).
+-- Filled each draw call; avoids per-frame table creation.
+local STAR_VERTS = {}
+for _i = 1, 20 do STAR_VERTS[_i] = 0 end
+
 function Coin:new(x, y, radius)
   self.x        = x
   self.y        = y
@@ -69,6 +74,8 @@ function Coin:new(x, y, radius)
   self.bounceX = nil
   self.bounceY = nil
   self._tSplit = nil
+  -- Item type key for icon selection. Caller sets to 'easy_coin' for easy coins.
+  self.itemType = 'coin'
 end
 
 -- Tap-hit detection. True if (px, py) is inside the coin's radius AND the
@@ -307,11 +314,82 @@ function Coin:draw()
 
   local alpha = self.used and 0.30 or 1.0
   local fill  = Tiers[(self.tier or 0) + 1].color
+
+  -- Motion trail: 4 ghost circles behind the coin during flight.
+  -- Alpha ramps from 0.25 (g=1, closest) down to ~0.05 (g=4, farthest).
+  if self.flipping then
+    local t_now = self.flipTime / self.flightDuration
+    for g = 4, 1, -1 do
+      local tg = t_now - g * 0.05
+      if tg > 0 then
+        local gx, gy, gz
+        if self.bounceX then
+          local ts = self._tSplit
+          if tg < ts then
+            local p = (ts > 0) and (tg / ts) or 0
+            gx = self.startX  + (self.bounceX - self.startX)  * p
+            gy = self.startY  + (self.bounceY - self.startY)  * p
+            gz = sin(p * pi)  * self.arcHeight * ts
+          else
+            local rem = 1 - ts
+            local p   = (rem > 0) and ((tg - ts) / rem) or 1
+            gx = self.bounceX + (self.targetX - self.bounceX) * p
+            gy = self.bounceY + (self.targetY - self.bounceY) * p
+            gz = sin(p * pi)  * self.arcHeight * rem
+          end
+        else
+          gx = self.startX + (self.targetX - self.startX) * tg
+          gy = self.startY + (self.targetY - self.startY) * tg
+          gz = sin(tg * pi) * self.arcHeight
+        end
+        local ga = 0.25 - (g - 1) * (0.20 / 3)
+        lg.setColor(fill[1], fill[2], fill[3], ga)
+        lg.circle("fill", gx, gy - gz, self.radius * 0.65)
+      end
+    end
+  end
+
   lg.setColor(fill[1], fill[2], fill[3], alpha)
   lg.ellipse("fill", self.x, self.y - self.z, self.radius * sx, self.radius)
   lg.setColor(COLOR_COIN_OUTLINE[1], COLOR_COIN_OUTLINE[2], COLOR_COIN_OUTLINE[3], alpha)
   lg.setLineWidth(2)
   lg.ellipse("line", self.x, self.y - self.z, self.radius * sx, self.radius)
+
+  -- Coin icon: shown only when not retired (used=false).
+  if not self.used then
+    local cx = self.x
+    local cy = self.y - self.z
+    if self.itemType == 'easy_coin' then
+      -- 5-point star for easy_coin.
+      local outerR = self.radius * 0.45
+      local innerR = self.radius * 0.20
+      for i = 0, 4 do
+        local ao = (i * 2 * pi / 5) - pi * 0.5
+        local ai = ao + pi * 0.2
+        STAR_VERTS[i * 4 + 1] = cx + cos(ao) * outerR
+        STAR_VERTS[i * 4 + 2] = cy + sin(ao) * outerR
+        STAR_VERTS[i * 4 + 3] = cx + cos(ai) * innerR
+        STAR_VERTS[i * 4 + 4] = cy + sin(ai) * innerR
+      end
+      lg.setColor(1, 1, 1, 0.55)
+      lg.polygon("fill", STAR_VERTS)
+    else
+      -- Simplified skull for mid coin.
+      local cr   = self.radius * 0.40
+      local oy   = cy - self.radius * 0.10
+      lg.setColor(1, 1, 1, 0.55)
+      lg.circle("fill", cx, oy, cr)
+      local eyeR   = self.radius * 0.09
+      local eyeOff = cr * 0.38
+      lg.setColor(0.10, 0.10, 0.10, 0.80)
+      lg.circle("fill", cx - eyeOff, oy - eyeR, eyeR)
+      lg.circle("fill", cx + eyeOff, oy - eyeR, eyeR)
+      local jawY = oy + cr + self.radius * 0.04
+      lg.setColor(1, 1, 1, 0.45)
+      lg.setLineWidth(1.5)
+      lg.line(cx - cr * 0.40, jawY, cx + cr * 0.40, jawY)
+    end
+  end
 
   -- Leading-edge indicator: a small bright dot on the coin's perimeter in
   -- the direction of travel. Visible only while the coin is flipping so the
