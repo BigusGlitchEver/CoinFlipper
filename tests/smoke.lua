@@ -469,6 +469,86 @@ function M.run()
   check(c, "7ee left arrow returns selection to coin1 (idx 1)",
     Game.conflictIdx == 1 and Game.hoveredCoin == Game.coins[1])
 
+  -- ---------- (Chain reaction tests) ----------
+  print("\n[7+] Chain reaction (leading edge -> pressedBy -> two-zone):")
+
+  -- 7ch-a) Chain trigger at depth 1: a landing coin whose disc overlaps a
+  --        target coin's disc flips that target via the leading edge.
+  --        Coin A at (400, 400) -- center tap fires UP at power 80 -> lands
+  --        at (400, 320). Coin B at (400, 320, r=14) -- same spot, max overlap.
+  --        Leading edge of A in travel direction (-pi/2 = up): (400, 306).
+  --        That sits at distance 14 from B's center -- right on the edge,
+  --        NOT strictly inside, so the fallback path activates (direction
+  --        from landing pos (400,320) to B center (400,320) is degenerate;
+  --        the d > 0 guard leaves edgeX/Y as the leading-edge point, and
+  --        pressedBy clamps it to offDist == 1).
+  Game:enter(nil, "Grandma")
+  local chainA = require("entities.coin")(400, 400, 14)
+  local chainB = require("entities.coin")(400, 320, 14)
+  Game.coins = { chainA, chainB }
+  Game._fireFlip(Game, chainA, chainA.x, chainA.y, 0)
+  check(c, "7ch-a during player flight: gate engaged",
+    Game.activeCoin == chainA)
+  -- Tick past A's full 0.45s flight to land it and trigger the chain.
+  for i = 1, 12 do Game:update(0.05) end   -- 0.6s
+  check(c, "7ch-b A landed (not flipping)", not chainA.flipping)
+  check(c, "7ch-c chain fired on B (B is flipping)", chainB.flipping)
+  check(c, "7ch-d player gate RELEASED while chain mid-air",
+    Game.activeCoin == nil)
+
+  -- 7ch-e) Chain at depth 3 does NOT propagate further. Fire A at depth 3
+  --        with a setup where A lands overlapping B; B should remain idle.
+  Game:enter(nil, "Grandma")
+  local depthA = require("entities.coin")(400, 400, 14)
+  local depthB = require("entities.coin")(400, 320, 14)
+  Game.coins = { depthA, depthB }
+  Game._fireFlip(Game, depthA, depthA.x, depthA.y, 3)
+  for i = 1, 12 do Game:update(0.05) end
+  check(c, "7ch-e depth-3 fire: A landed",          not depthA.flipping)
+  check(c, "7ch-f depth-3 fire: NO chain on B",     not depthB.flipping)
+  check(c, "7ch-g depth-3 fire: B not retired",     not depthB.used)
+
+  -- 7ch-h) Leading-edge FALLBACK: landing coin moves RIGHT (angle = 0) and
+  --        overlaps a target to its LEFT. Leading edge (314, 300) is well
+  --        outside target B (290, 300, r=14) -- dist 24 > 14 -- so the
+  --        primary leading-edge contact misses. The fallback picks the
+  --        landing coin's perimeter point toward the target center:
+  --          dir = ((290-300)/10, 0) = (-1, 0)
+  --          edgeX, edgeY = 300 + (-1)*14, 300 = (286, 300)
+  --        which is strictly inside B (dist 4 < 14). Chain fires.
+  Game:enter(nil, "Grandma")
+  local fbA = require("entities.coin")(300, 300, 14); fbA.launchAngle = 0
+  local fbB = require("entities.coin")(290, 300, 14)
+  Game.coins = { fbA, fbB }
+  Game._tryChainFlip(Game, fbA, 300, 300, 1)
+  check(c, "7ch-h leading-edge fallback fires chain on B",
+    fbB.flipping)
+
+  -- 7ch-i) Player gate is NOT released for a chain-only flight. If we
+  --        manually trigger a chain (depth 1) without ever doing a depth-0
+  --        player flip, activeCoin should remain nil throughout.
+  Game:enter(nil, "Grandma")
+  local cgA = require("entities.coin")(300, 300, 14); cgA.launchAngle = 0
+  local cgB = require("entities.coin")(295, 300, 14)
+  Game.coins = { cgA, cgB }
+  Game._tryChainFlip(Game, cgA, 300, 300, 1)
+  check(c, "7ch-i chain (non-player) flight does NOT engage player gate",
+    Game.activeCoin == nil and cgB.flipping)
+
+  -- 7ch-j) Player gate blocks subsequent clicks while player coin in air.
+  Game:enter(nil, "Grandma")
+  local gateA = require("entities.coin")(400, 400, 14)
+  local gateB = require("entities.coin")(400, 420, 14)  -- separate, no overlap at A's landing
+  Game.coins = { gateA, gateB }
+  Game._fireFlip(Game, gateA, gateA.x, gateA.y, 0)
+  check(c, "7ch-j player coin mid-air -> activeCoin set",
+    Game.activeCoin == gateA)
+  -- Try to click on gateB while gateA is in the air. The mousepressed gate
+  -- should reject it. Use a synthetic dot position via mousepressed.
+  Game:mousepressed(gateB.x, gateB.y + Game._L.toolR, 1)
+  check(c, "7ch-k second click during player flight is IGNORED",
+    not gateB.flipping)
+
   -- ---------- (4) Region map + circle press + power/arc curves ----------
   print("\n[4/4] Coin:regionAt + Coin:pressedBy + Coin:launch:")
   local Coin   = require("entities.coin")

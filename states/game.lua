@@ -431,12 +431,19 @@ local function resolveFlip(self, coin, landingX, landingY)
   end
 end
 
--- Shared launch path: used by both the auto-arm click and the WASD
--- conflict-resolution keypress. Computes offset/region/zone curves from a
--- given dot position and fires the coin.
-local function fireFlip(self, coin, dotX, dotY)
+-- Shared launch path: used by the player click AND by chain reactions.
+-- contactX/Y is a screen point on the coin (player: rim dot; chain: leading
+-- edge of the landing coin). depth: 0 = player flip (gates input via
+-- self.activeCoin); >= 1 = chain step (bypasses player gate). Chains stop
+-- propagating when depth reaches 3 (so at most 3 hops past the player flip).
+--
+-- Forward-declared because tryChainFlip calls fireFlip and fireFlip's launch
+-- callback calls tryChainFlip.
+local fireFlip, tryChainFlip
+
+fireFlip = function(self, coin, contactX, contactY, depth)
   local item = self.activeCoinItem
-  local offX, offY, offDist = coin:pressedBy(dotX, dotY)
+  local offX, offY, offDist = coin:pressedBy(contactX, contactY)
   if not offX then return end
   local region = coin:regionAt(offX, offY, item)
   local angle  = region and region.angle or -pi / 2
@@ -445,14 +452,67 @@ local function fireFlip(self, coin, dotX, dotY)
     if region.power then power = region.power end
     if region.arc   then arc   = region.arc   end
   end
+  -- Player gate: only depth-0 flips block subsequent player input.
+  if depth == 0 then self.activeCoin = coin end
   coin:launch(angle, power, arc, item, function(lx, ly)
     local zone, _ = resolveFlip(self, coin, lx, ly)
     if zone == "bull" or zone == "middle" or zone == "outer" then
       coin.used = true  -- scoring hits retire the coin at its current tier
     end
     -- Tier mutation on misses is handled inside resolveFlip.
+    -- Chain reaction: bumps the depth. At depth 3 we still LAND and resolve
+    -- normally, but we do NOT trigger a 4th-hop chain.
+    if depth < 3 then
+      tryChainFlip(self, coin, lx, ly, depth + 1)
+    end
+    -- Release the player gate exactly when the player's own coin lands.
+    -- Chains fired by that coin are already in the air; they don't gate
+    -- further player input.
+    if depth == 0 then self.activeCoin = nil end
   end)
-  self.activeCoin = coin
+end
+
+-- After a coin lands at (lx, ly), check every OTHER live, flippable coin for
+-- disc overlap. Each overlapping target is chain-flipped, using the LEADING
+-- EDGE of the landing coin (perimeter point in the landing coin's travel
+-- direction) as the contact. If the leading-edge point misses the target's
+-- own disc (e.g. side-swiping overlap), fall back to the landing coin's
+-- perimeter point in the direction of the target's center. From there, the
+-- usual pressedBy -> regionAt -> resolveShot path resolves the chain shot.
+tryChainFlip = function(self, landingCoin, lx, ly, depth)
+  local lr = landingCoin.radius
+  local a  = landingCoin.launchAngle or 0
+  local ca = cos(a)
+  local sa = sin(a)
+  for i = 1, #self.coins do
+    local target = self.coins[i]
+    if target ~= landingCoin
+       and not target.flipping and not target.used then
+      local dx   = target.x - lx
+      local dy   = target.y - ly
+      local d2   = dx * dx + dy * dy
+      local sumR = lr + target.radius
+      if d2 < (sumR * sumR) then
+        -- Primary: leading edge in travel direction.
+        local edgeX = lx + ca * lr
+        local edgeY = ly + sa * lr
+        -- If the leading edge isn't strictly inside the target, fall back to
+        -- the landing coin's rim toward the target center.
+        local edx = edgeX - target.x
+        local edy = edgeY - target.y
+        local tr  = target.radius
+        if (edx * edx + edy * edy) >= (tr * tr) then
+          local d = sqrt(d2)
+          if d > 0 then
+            local invD = 1 / d
+            edgeX = lx + dx * invD * lr
+            edgeY = ly + dy * invD * lr
+          end
+        end
+        fireFlip(self, target, edgeX, edgeY, depth)
+      end
+    end
+  end
 end
 
 -- ---------- State lifecycle ----------
@@ -637,7 +697,7 @@ function Game:mousepressed(x, y, button)
   self.toolX, self.toolY = x, y
   self:_refreshHover()
   if not self.armedDotIdx then return end            -- no dot inside any coin
-  fireFlip(self, self.hoveredCoin, self.armedDotX, self.armedDotY)
+  fireFlip(self, self.hoveredCoin, self.armedDotX, self.armedDotY, 0)
 end
 
 function Game:keypressed(k)
@@ -672,6 +732,8 @@ end
 Game._resolveFlip     = resolveFlip
 Game._findPressedCoin = findPressedCoin
 Game._resolveShot     = resolveShot
+Game._fireFlip        = function(self, coin, x, y, depth) return fireFlip(self, coin, x, y, depth) end
+Game._tryChainFlip    = function(self, landing, lx, ly, depth) return tryChainFlip(self, landing, lx, ly, depth) end
 Game._L               = L  -- layout table (read after enter())
 
 return Game

@@ -62,6 +62,9 @@ function Coin:new(x, y, radius)
   -- Degradation tier 0..3. Starts at 0 (yellow, full value). Each non-scoring
   -- flip bumps it; capped at 3 (red, 0.25x). game.lua's resolveFlip mutates.
   self.tier = 0
+  -- Last launch direction in radians (screen-space). Stored so the chain
+  -- reaction can compute the leading-edge contact point at landing.
+  self.launchAngle = 0
 end
 
 -- Tap-hit detection. True if (px, py) is inside the coin's radius AND the
@@ -160,6 +163,7 @@ function Coin:launch(angle, power, arc, item, callback)
   self.flightDuration = flight_time
   self.arcHeight      = arc
   self.landedCallback = callback
+  self.launchAngle    = angle  -- needed at landing for the chain leading edge
 
   return lx, ly
 end
@@ -211,6 +215,18 @@ function Coin:draw()
   lg.setColor(COLOR_COIN_OUTLINE[1], COLOR_COIN_OUTLINE[2], COLOR_COIN_OUTLINE[3], alpha)
   lg.setLineWidth(2)
   lg.ellipse("line", self.x, self.y - self.z, self.radius * sx, self.radius)
+
+  -- Leading-edge indicator: a small bright dot on the coin's perimeter in
+  -- the direction of travel. Visible only while the coin is flipping so the
+  -- player can anticipate where a chain contact will land.
+  if self.flipping then
+    local a  = self.launchAngle or 0
+    local ex = self.x + cos(a) * self.radius
+    local ey = self.y - self.z + sin(a) * self.radius
+    lg.setColor(1, 1, 1, 1)
+    lg.circle("fill", ex, ey, 4)
+  end
+
   lg.setColor(1, 1, 1, 1)
 end
 
