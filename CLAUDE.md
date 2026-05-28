@@ -43,6 +43,9 @@ Enemy, etc. are classic classes in `entities/`, with `:new()`, `:update(dt)`,
 - **Never create tables inside `update` or `draw`.** Pre-allocate in the state's
   `enter` (our equivalent of `love.load`) and reuse. This is the most common way
   to tank framerate — watch for it in every change.
+- **Call `rebuildLayout()` in `Game:enter`**, not only on window resize. Layout
+  values (`L.boardX`, `L.toolR`, etc.) depend on the window size; always
+  recompute them at enter time so tests and in-game logic see consistent values.
 - **Object pooling** for anything spawned repeatedly: score popups, the Marble
   shower, particles, multiple flip items. Recycle from a fixed-size pool; never
   create/destroy on the fly. The score-popup pool in `states/game.lua` is the
@@ -145,11 +148,11 @@ pockets, click-to-launch arc, multiplier chain, score-popup object pool, HUD.
 **M** returns to map, **R** resets the run, **Esc** quits. A headless smoke
 test lives at `tests/smoke.lua` and is invoked with `lovec . --test`.
 
-**Pending refactor (next chunk):** the flip board needs to be rebuilt to the
-agreed model — rectangle board + single mutable circle, tap-the-coin input
-(not tap-the-zone), closed-form parametric arc with per-item tuning, three-tier
-landing resolution. See the `docs/` files. The current `states/game.lua` is a
-placeholder until that lands.
+**Layout (current):** left score panel (220 px) + 10 px dark border frame +
+inner white board; portrait-ish (boardH > boardW at 800x600). Target randomises
+position each `Game:enter` within a margin from the board edges. Coins bounce
+off walls with a two-phase arc. Scatter rejects positions overlapping the target
+exclusion zone. Tool draws interior sliver tabs (9 deg, r—5) + 3—4 px contact dots.
 
 **Predates this prototype work (preserved, not yet wired into the loop):**
 the buildings manager (`components/buildings/manager.lua`) — conquered-house
