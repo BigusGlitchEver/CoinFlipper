@@ -75,6 +75,23 @@ local EASY_REGIONS = {
   { x =  EC, y =  EC, w = EW,     h = EW,     angle = -3*pi/4  },  -- BR
 }
 
+-- Mini coin regions: even larger centre cell (MC = 0.55 half-width) for a
+-- very forgiving dead zone. Outer cells are narrow (0.45) but still cover
+-- the full coin surface.
+local MC = 0.55        -- mini centre cell half-width
+local MW = 1 - MC      -- outer cell width = 0.45
+local MINI_REGIONS = {
+  { x = -1,  y = -1,  w = MW,     h = MW,     angle =  pi/4    },  -- TL
+  { x = -MC, y = -1,  w = 2 * MC, h = MW,     angle =  pi/2    },  -- TC
+  { x =  MC, y = -1,  w = MW,     h = MW,     angle =  3*pi/4  },  -- TR
+  { x = -1,  y = -MC, w = MW,     h = 2 * MC, angle =  0       },  -- ML
+  { x = -MC, y = -MC, w = 2 * MC, h = 2 * MC, angle = -pi/2    },  -- C (huge: ~55%)
+  { x =  MC, y = -MC, w = MW,     h = 2 * MC, angle =  pi      },  -- MR
+  { x = -1,  y =  MC, w = MW,     h = MW,     angle = -pi/4    },  -- BL
+  { x = -MC, y =  MC, w = 2 * MC, h = MW,     angle = -pi/2    },  -- BC
+  { x =  MC, y =  MC, w = MW,     h = MW,     angle = -3*pi/4  },  -- BR
+}
+
 Data.items = {
   {
     id                 = 'coin',
@@ -88,7 +105,6 @@ Data.items = {
     outer_arc_center   = 70,    outer_arc_edge   = 25,
     flight_time        = 0.45,
     regions            = DEFAULT_REGIONS,
-    flight_time=0.45, regions=DEFAULT_REGIONS,
   },
   {
     id                 = 'easy_coin',
@@ -105,6 +121,38 @@ Data.items = {
     flight_time        = 0.45,
     regions            = EASY_REGIONS,
     notes              = 'Large dead zone; forgiving. Edge identical to Coin edge.',
+  },
+  {
+    id                 = 'mini_coin',
+    name               = 'Mini Coin',
+    tier               = 'easy',
+    color              = { 0.30, 0.88, 0.60 },
+    zone_threshold     = 0.55,
+    -- Very large flat dead zone: 0-55% always produces the same centre shot.
+    inner_power_center = 80,    inner_power_edge = 80,
+    inner_arc_center   = 220,   inner_arc_edge   = 220,
+    -- Gentle outer ramp: lower max power + softer arc drop than other coins.
+    outer_power_center = 80,    outer_power_edge = 280,
+    outer_arc_center   = 220,   outer_arc_edge   = 60,
+    flight_time        = 0.55,
+    regions            = MINI_REGIONS,
+    notes              = 'Tiny coin, huge dead zone, gentle ramp. Most forgiving.',
+  },
+  {
+    id                 = 'hard_coin',
+    name               = 'Hard Coin',
+    tier               = 'high',
+    color              = { 0.80, 0.20, 0.20 },
+    zone_threshold     = 0.15,
+    -- Tiny dead zone: only the very centre press stays controlled.
+    inner_power_center = 100,   inner_power_edge = 100,
+    inner_arc_center   = 180,   inner_arc_edge   = 180,
+    -- Steep ramp: power and arc change drastically with tap position.
+    outer_power_center = 100,   outer_power_edge = 420,
+    outer_arc_center   = 180,   outer_arc_edge   = 8,
+    flight_time        = 0.35,
+    regions            = DEFAULT_REGIONS,
+    notes              = 'Same size as Coin; hair-trigger outer zone, fast flight.',
   },
   {
     id                 = 'lucky_coin',
