@@ -7,6 +7,7 @@
 -- states/game.lua reads .mult in resolveFlip.
 
 local EASY_COIN_RADIUS_SCALE = 0.82  -- easy coins are 82% of standard radius
+local MINI_COIN_RADIUS_SCALE = 0.65  -- mini coins are 65% of standard radius
 
 local Tiers = {
   { color = { 0xF0/255, 0xC0/255, 0x40/255 }, mult = 1.00 },  -- 0 yellow (fresh)
@@ -16,5 +17,6 @@ local Tiers = {
 }
 
 Tiers.EASY_COIN_RADIUS_SCALE = EASY_COIN_RADIUS_SCALE
+Tiers.MINI_COIN_RADIUS_SCALE = MINI_COIN_RADIUS_SCALE
 
 return Tiers
