@@ -207,6 +207,47 @@ local function scatterCoins(n, item)
   return coins
 end
 
+-- scatterBoard: places 1 Mid coin + 2 Easy coins with spacing and target
+-- exclusion checks. Returns a table of Coin instances with itemType set.
+local function scatterBoard()
+  local easyR    = floor(L.coinR * Tiers.EASY_COIN_RADIUS_SCALE)
+  local midItem  = Items.byId("coin")
+  local easyItem = Items.byId("easy_coin")
+  local specs = {
+    { radius = L.coinR, itemType = "coin",      item = midItem  },
+    { radius = easyR,   itemType = "easy_coin", item = easyItem },
+    { radius = easyR,   itemType = "easy_coin", item = easyItem },
+  }
+  local coins       = {}
+  local maxAttempts = 60
+  for _, spec in ipairs(specs) do
+    local cr = spec.radius
+    for attempt = 1, maxAttempts do
+      local x = love.math.random(floor(L.boardX + cr), floor(L.boardX + L.boardW - cr))
+      local y = love.math.random(floor(L.boardY + cr), floor(L.boardY + L.boardH - cr))
+      local ok = true
+      for j = 1, #coins do
+        local c = coins[j]
+        local dx, dy = x - c.x, y - c.y
+        local sep = cr + c.radius + 12
+        if (dx * dx + dy * dy) < (sep * sep) then ok = false; break end
+      end
+      if ok then
+        local tdx, tdy = x - L.targetCX, y - L.targetCY
+        local tThresh = L.outerR + cr + 8
+        if (tdx * tdx + tdy * tdy) < (tThresh * tThresh) then ok = false end
+      end
+      if ok then
+        local c = Coin(x, y, cr)
+        c.itemType = spec.itemType
+        coins[#coins + 1] = c
+        break
+      end
+    end
+  end
+  return coins
+end
+
 -- ---------- Flip tool (round, follows the cursor) ----------
 
 -- Draws the tool as a Simon-Says wheel: translucent grey hub + 6 colored
@@ -448,7 +489,7 @@ end
 local fireFlip, tryChainFlip
 
 fireFlip = function(self, coin, contactX, contactY, depth)
-  local item = self.activeCoinItem
+  local item = (coin.itemType and Items.byId(coin.itemType)) or self.activeCoinItem
   local offX, offY, offDist = coin:pressedBy(contactX, contactY)
   if not offX then return end
   local region = coin:regionAt(offX, offY, item)
@@ -540,8 +581,8 @@ function Game:enter(prev, houseName)
 
   -- Prototype: every coin in the scatter is the same item (Coin). Future:
   -- per-floor item assignment, varied per scatter spot.
-  self.activeCoinItem = Items.byId("coin")
-  self.coins          = scatterCoins(COINS_PER_FLOOR, self.activeCoinItem)
+  self.activeCoinItem = Items.byId("coin")  -- fallback for legacy paths
+  self.coins          = scatterBoard()
   self.activeCoin     = nil  -- the one currently in flight, or nil
   self.hoveredCoin    = nil  -- coin of the currently selected pair (any state)
   -- conflictDots: preallocated list of {idx, coin} PAIR slots. After
@@ -703,9 +744,12 @@ function Game:draw()
   -- Region debug overlay (press 'd' to toggle). On top of everything.
   if self.debugRegions then
     for i = 1, #self.coins do
-      drawRegionDebug(self.coins[i], self.activeCoinItem)
+      local dItem = Items.byId(self.coins[i].itemType or "coin") or self.activeCoinItem
+      drawRegionDebug(self.coins[i], dItem)
     end
-    drawHoverDebug(self.hoveredCoin, self.activeCoinItem,
+    local hItem = self.hoveredCoin and
+      (Items.byId(self.hoveredCoin.itemType or "coin") or self.activeCoinItem)
+    drawHoverDebug(self.hoveredCoin, hItem,
                    self.armedDotX, self.armedDotY)
   end
 
