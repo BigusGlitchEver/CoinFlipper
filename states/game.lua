@@ -99,6 +99,27 @@ local DOT_COLORS_DARK = {
   { 0x55/255, 0x11/255, 0x88/255 },  -- 6 dark purple
 }
 
+local TOOL_CIRCLE   = "circle"
+local TOOL_TRIANGLE = "triangle"
+
+-- Triangle tip unit vectors (equilateral, tip pointing up).
+-- Angles: 270 deg (top), 30 deg (bottom-right), 150 deg (bottom-left).
+local TRI_UX = {}
+local TRI_UY = {}
+do
+  local triAngles = { 270, 30, 150 }
+  for _ti = 1, 3 do
+    local rad = triAngles[_ti] * pi / 180
+    TRI_UX[_ti] = cos(rad)
+    TRI_UY[_ti] = sin(rad)
+  end
+end
+local TRI_COLORS = {
+  { 1.00, 0.60, 0.15 },  -- tip 1: amber (top)
+  { 0.15, 0.85, 0.60 },  -- tip 2: teal  (bottom-right)
+  { 0.75, 0.15, 1.00 },  -- tip 3: violet (bottom-left)
+}
+
 local Game = {}
 
 -- ---------- Visual spec colors ----------
@@ -126,6 +147,7 @@ local COLOR_BTN            = { 0.28, 0.28, 0.28 }
 local COLOR_BTN_BORDER     = { 0.48, 0.48, 0.48 }
 local COLOR_BTN_TEXT       = { 0.78, 0.78, 0.78 }
 local COLOR_DEBUG_ON       = { 0.25, 0.80, 0.35 }
+local COLOR_TOOL_ACTIVE    = { 0.25, 0.60, 1.00 }  -- blue tint for selected tool btn
 
 -- ---------- Tunables ----------
 
@@ -229,6 +251,7 @@ local function scatterBoard()
   local specs = {
     { radius = L.coinR, itemType = "coin",      item = midItem  },
     { radius = easyR,   itemType = "easy_coin", item = easyItem },
+    { radius = easyR,   itemType = "easy_coin", item = easyItem },
     { radius = miniR,   itemType = "mini_coin", item = miniItem },
     { radius = L.coinR, itemType = "hard_coin", item = hardItem },
   }
@@ -263,6 +286,39 @@ local function scatterBoard()
 end
 
 -- ---------- Flip tool (round, follows the cursor) ----------
+
+-- Triangle tool: equilateral triangle (tip pointing up). The three vertices
+-- ARE the contact points; no external dots. Tips highlight when armed.
+local function drawTriangleToolAt(x, y, armedDot)
+  local r   = L.toolR
+  local v1x = x + TRI_UX[1] * r;  local v1y = y + TRI_UY[1] * r
+  local v2x = x + TRI_UX[2] * r;  local v2y = y + TRI_UY[2] * r
+  local v3x = x + TRI_UX[3] * r;  local v3y = y + TRI_UY[3] * r
+  -- Translucent body.
+  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.30)
+  lg.polygon("fill", v1x, v1y, v2x, v2y, v3x, v3y)
+  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.55)
+  lg.setLineWidth(1.5)
+  lg.polygon("line", v1x, v1y, v2x, v2y, v3x, v3y)
+  -- Tips are the actual contact points; no external dots.
+  local vx, vy
+  for d = 1, 3 do
+    if     d == 1 then vx = v1x; vy = v1y
+    elseif d == 2 then vx = v2x; vy = v2y
+    else               vx = v3x; vy = v3y
+    end
+    local col     = TRI_COLORS[d]
+    local isArmed = (d == armedDot)
+    lg.setColor(col[1], col[2], col[3], 1)
+    lg.circle("fill", vx, vy, isArmed and 7 or 5)
+    if isArmed then
+      lg.setColor(1, 1, 1, 1)
+      lg.setLineWidth(1.5)
+      lg.circle("line", vx, vy, 7)
+    end
+  end
+  lg.setColor(1, 1, 1, 1)
+end
 
 -- Draws the tool as a Simon-Says wheel: translucent grey hub + 6 colored
 -- arc panels around the rim with darker center marks at the exact dot
@@ -411,11 +467,14 @@ end
 --   0  -> no contact
 --   1  -> auto-arm (single pair; caller uses outConflict[1])
 --   2+ -> conflict (player cycles through outConflict[1..count] with A/D)
-local function findPressedCoin(coins, toolX, toolY, toolR, outConflict)
+local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriangle)
+  local ux    = isTriangle and TRI_UX or DOT_UX
+  local uy    = isTriangle and TRI_UY or DOT_UY
+  local ndots = isTriangle and 3 or 6
   local count = 0
-  for d = 1, 6 do
-    local dxd = toolX + DOT_UX[d] * toolR
-    local dyd = toolY + DOT_UY[d] * toolR
+  for d = 1, ndots do
+    local dxd = toolX + ux[d] * toolR
+    local dyd = toolY + uy[d] * toolR
     -- Find the closest live coin this dot is strictly INSIDE.
     local bestCoin, bestD2 = nil, huge
     for i = 1, #coins do
@@ -621,6 +680,7 @@ function Game:enter(prev, houseName)
   self.armedDotY      = nil
   -- Tool follows the mouse; initialize to current cursor so it doesn't pop in.
   self.toolX, self.toolY = lm.getPosition()
+  self.toolType     = self.toolType or TOOL_CIRCLE  -- preserved across [R] restart
   self.debugRegions = self.debugRegions or false
   -- Hide the OS cursor on the flip board -- the grey tool circle IS the
   -- pointer. lm.getPosition() still works while the cursor is hidden.
@@ -647,8 +707,10 @@ function Game:_updateArmed()
   local pair = self.conflictDots[i]
   self.hoveredCoin = pair.coin
   self.armedDotIdx = pair.idx
-  self.armedDotX   = self.toolX + DOT_UX[pair.idx] * L.toolR
-  self.armedDotY   = self.toolY + DOT_UY[pair.idx] * L.toolR
+  local ardUX = (self.toolType == TOOL_TRIANGLE) and TRI_UX or DOT_UX
+  local ardUY = (self.toolType == TOOL_TRIANGLE) and TRI_UY or DOT_UY
+  self.armedDotX   = self.toolX + ardUX[pair.idx] * L.toolR
+  self.armedDotY   = self.toolY + ardUY[pair.idx] * L.toolR
 end
 
 -- Recompute hover/conflict state from the current self.toolX / self.toolY.
@@ -663,7 +725,8 @@ function Game:_refreshHover()
   end
 
   local count = findPressedCoin(
-    self.coins, self.toolX, self.toolY, L.toolR, self.conflictDots)
+    self.coins, self.toolX, self.toolY, L.toolR, self.conflictDots,
+    self.toolType == TOOL_TRIANGLE)
   self.conflictCount = count
 
   if count <= 1 then
@@ -753,6 +816,50 @@ function Game:draw()
   lg.line(px, py, px + pw, py)
   py = py + 12
 
+  -- Tool selector
+  lg.setColor(COLOR_PANEL_LABEL[1], COLOR_PANEL_LABEL[2], COLOR_PANEL_LABEL[3])
+  lg.print("TOOL", px, py)
+  py = py + 18
+  local halfBtnW = (pw - 8) / 2
+  self._toolBtnY = py
+  for bi = 1, 2 do
+    local bx     = px + (bi - 1) * (halfBtnW + 8)
+    local isCirc = (bi == 1)
+    local active = (isCirc and self.toolType == TOOL_CIRCLE) or
+                   (not isCirc and self.toolType == TOOL_TRIANGLE)
+    local bgCol  = active and COLOR_TOOL_ACTIVE or COLOR_BTN
+    local brCol  = active and COLOR_TOOL_ACTIVE or COLOR_BTN_BORDER
+    lg.setColor(bgCol[1], bgCol[2], bgCol[3], active and 0.28 or 1)
+    lg.rectangle("fill", bx, py, halfBtnW, 38, 4, 4)
+    lg.setColor(brCol[1], brCol[2], brCol[3])
+    lg.setLineWidth(active and 2 or 1)
+    lg.rectangle("line", bx, py, halfBtnW, 38, 4, 4)
+    local iconX = bx + halfBtnW * 0.5
+    local iconY = py + 19
+    local iconR = 11
+    local iconA = active and 1.0 or 0.55
+    if isCirc then
+      lg.setColor(1, 1, 1, iconA * 0.30)
+      lg.circle("fill", iconX, iconY, iconR)
+      lg.setColor(1, 1, 1, iconA)
+      lg.setLineWidth(2)
+      lg.circle("line", iconX, iconY, iconR)
+    else
+      local ti1x = iconX + TRI_UX[1] * iconR
+      local ti1y = iconY + TRI_UY[1] * iconR
+      local ti2x = iconX + TRI_UX[2] * iconR
+      local ti2y = iconY + TRI_UY[2] * iconR
+      local ti3x = iconX + TRI_UX[3] * iconR
+      local ti3y = iconY + TRI_UY[3] * iconR
+      lg.setColor(1, 1, 1, iconA * 0.30)
+      lg.polygon("fill", ti1x, ti1y, ti2x, ti2y, ti3x, ti3y)
+      lg.setColor(1, 1, 1, iconA)
+      lg.setLineWidth(2)
+      lg.polygon("line", ti1x, ti1y, ti2x, ti2y, ti3x, ti3y)
+    end
+  end
+  py = py + 50
+
   -- Restart button
   lg.setColor(COLOR_BTN[1], COLOR_BTN[2], COLOR_BTN[3])
   lg.rectangle("fill", px, py, pw, 26, 4, 4)
@@ -802,8 +909,12 @@ function Game:draw()
   -- Flip tool follows the cursor. Simon-Says wheel: 6 arc panels around the
   -- rim with dark center marks at the exact contact angles. The armed bar
   -- gets a white halo; conflict-available bars pulse thicker.
-  drawToolAt(self.toolX, self.toolY, self.armedDotIdx,
-             self.conflictDots, self.conflictCount)
+  if self.toolType == TOOL_TRIANGLE then
+    drawTriangleToolAt(self.toolX, self.toolY, self.armedDotIdx)
+  else
+    drawToolAt(self.toolX, self.toolY, self.armedDotIdx,
+               self.conflictDots, self.conflictCount)
+  end
 
   -- Region debug overlay (press 'd' to toggle). On top of everything.
   if self.debugRegions then
@@ -824,6 +935,17 @@ end
 
 function Game:mousepressed(x, y, button)
   if button ~= 1 then return end
+  -- Panel tool switcher clicks (checked before the board flip gate).
+  if x < L.panelW and self._toolBtnY then
+    if y >= self._toolBtnY and y <= self._toolBtnY + 38 then
+      local bpx = L.panelX + 18
+      local bpw = L.panelW - 36
+      local mid = bpx + (bpw - 8) / 2
+      self.toolType = (x < mid) and TOOL_CIRCLE or TOOL_TRIANGLE
+      self:_refreshHover()
+      return
+    end
+  end
   if self.activeCoin then return end                 -- one flip at a time
   -- Re-sample so the click decision uses the freshest cursor position.
   self.toolX, self.toolY = x, y
@@ -856,6 +978,9 @@ function Game:keypressed(k)
     Game:enter(nil, self.houseName)
   elseif k == "g" then
     self.debugRegions = not self.debugRegions
+  elseif k == "t" then
+    self.toolType = (self.toolType == TOOL_TRIANGLE) and TOOL_CIRCLE or TOOL_TRIANGLE
+    self:_refreshHover()
   end
 end
 
