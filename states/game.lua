@@ -80,11 +80,8 @@ do
     DOT_ANGLES_RAD[i] = rad
   end
 end
-local BAR_HALF_WIDTH      = 28 * pi / 180   -- half of 56deg panel arc
-local CENTER_HALF         = 10 * pi / 180   -- half of 20deg dark center mark
-local BAR_LINE_WIDTH      =  9              -- normal panel thickness
-local BAR_LINE_WIDTH_AVAIL = 12             -- "available in conflict" thickness
-local BAR_OUTLINE_OFFSET  =  7              -- white halo arc radius offset
+local SLIVER_HALF_WIDTH = 9 * pi / 180   -- half-width of interior sliver tab
+local SLIVER_LINE_WIDTH = 5              -- sliver arc line width
 local DOT_COLORS = {
   { 0xFF/255, 0x44/255, 0x44/255 },  -- 1 red
   { 0xFF/255, 0x99/255, 0x33/255 },  -- 2 orange
@@ -118,6 +115,8 @@ local COLOR_TOOL_OUTLINE   = { 0x33/255, 0x33/255, 0x33/255 }
 local COLOR_HIGHLIGHT      = { 0.20, 0.95, 1.00 }   -- cyan "armed" ring
 local COLOR_TEXT           = { 0.10, 0.10, 0.10 }
 local COLOR_TEXT_DIM       = { 0.40, 0.40, 0.40 }
+local COLOR_PANEL          = { 0x22/255, 0x22/255, 0x22/255 }  -- left panel bg
+local COLOR_BORDER         = { 0x33/255, 0x33/255, 0x33/255 }  -- board border frame
 
 -- ---------- Tunables ----------
 
@@ -128,13 +127,11 @@ local FLOOR_THRESHOLDS = { [1] = 20, [2] = 60, [3] = 120 }
 -- Tight per Balatro lesson; the big numbers come from the multiplier chain.
 local POINTS = { bull = 5, middle = 3, outer = 1 }
 
-local HUD_HEIGHT       = 64
-local BOARD_MARGIN     = 16
--- Per FIX prompt: outer radius <= 18% of board's shortest dim. On 800x600
--- with this layout that's ~85px max; we pick 65px (in spec's 60-70 range)
--- so the target genuinely feels missable.
-local TARGET_OUTER_R   = 65
-local TARGET_CENTER_Y_FRAC = 0.40   -- target somewhat above middle, room for coin scatter below
+local PANEL_W   = 220   -- left score panel width
+local BORDER_T  = 10    -- board border thickness (pixels each side)
+local MARGIN    = 12    -- gap between screen edge/panel and border outer edge
+-- outerR <= 18% of board shortest dim; 65px sits in spec 60-70 range.
+local TARGET_OUTER_R = 65
 
 -- ---------- Layout (rebuilt on enter / resize) ----------
 
@@ -142,15 +139,24 @@ local L = {}
 
 local function rebuildLayout()
   L.W, L.H = lg.getWidth(), lg.getHeight()
-  L.hudH = HUD_HEIGHT
-  L.boardX = BOARD_MARGIN
-  L.boardY = L.hudH + BOARD_MARGIN
-  L.boardW = L.W - 2 * BOARD_MARGIN
-  L.boardH = L.H - L.boardY - BOARD_MARGIN
 
-  -- Target circle in the upper portion of the board.
-  L.targetCX = L.boardX + L.boardW / 2
-  L.targetCY = L.boardY + L.boardH * TARGET_CENTER_Y_FRAC
+  -- Left score panel.
+  L.panelX = 0
+  L.panelW = PANEL_W
+  L.panelH = L.H
+
+  -- Outer border frame.
+  L.borderX = PANEL_W + MARGIN
+  L.borderY = MARGIN
+  L.borderW = L.W - L.borderX - MARGIN
+  L.borderH = L.H - MARGIN * 2
+
+  -- Inner playing surface (inset BORDER_T on all sides).
+  L.boardX = L.borderX + BORDER_T
+  L.boardY = L.borderY + BORDER_T
+  L.boardW = L.borderW - BORDER_T * 2
+  L.boardH = L.borderH - BORDER_T * 2
+
   L.outerR  = TARGET_OUTER_R
   L.middleR = L.outerR * 0.66
   L.bullR   = L.outerR * 0.33
@@ -160,6 +166,8 @@ local function rebuildLayout()
   L.coinR = COIN_RADIUS_AT_390W
   -- Tool size derived from coin radius. Read by drawing AND hit-testing.
   L.toolR = L.coinR * TOOL_R_FACTOR
+  -- NOTE: targetCX/CY are NOT set here; they are randomised in Game:enter
+  -- each floor so they differ between runs.
 end
 
 -- ---------- Coin scatter ----------
@@ -179,6 +187,13 @@ local function scatterCoins(n, item)
         local dx = x - c.x
         local dy = y - c.y
         if (dx * dx + dy * dy) < (minSpacing * minSpacing) then ok = false; break end
+      end
+      -- Also reject positions that overlap the target ring.
+      if ok then
+        local tdx = x - L.targetCX
+        local tdy = y - L.targetCY
+        local tThresh = L.outerR + L.coinR + 8
+        if (tdx * tdx + tdy * tdy) < (tThresh * tThresh) then ok = false end
       end
       if ok then
         local coin = Coin(x, y, L.coinR)
@@ -209,51 +224,37 @@ local function drawToolAt(x, y, armedDot, conflictDots, conflictCount)
   lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.45)
   lg.circle("fill", x, y, toolR - 4)
 
-  local t = lt.getTime()
-  local pulse = 0.5 + 0.5 * sin(t * 8)
-
+  local sliverR = toolR - 5   -- interior sliver radius
   for d = 1, 6 do
-    local cAng = DOT_ANGLES_RAD[d]
-    local a1   = cAng - BAR_HALF_WIDTH
-    local a2   = cAng + BAR_HALF_WIDTH
-    local cm1  = cAng - CENTER_HALF
-    local cm2  = cAng + CENTER_HALF
-    local col  = DOT_COLORS[d]
-    local dark = DOT_COLORS_DARK[d]
-
+    local cAng   = DOT_ANGLES_RAD[d]
+    local a1     = cAng - SLIVER_HALF_WIDTH
+    local a2     = cAng + SLIVER_HALF_WIDTH
+    local col    = DOT_COLORS[d]
     local isArmed = (d == armedDot)
-    local isAvailable = false
-    if not isArmed and conflictCount and conflictCount > 1 then
-      for i = 1, conflictCount do
-        if conflictDots[i].idx == d then isAvailable = true; break end
-      end
-    end
 
-    -- Main bar arc.
-    if isAvailable then
-      lg.setLineWidth(BAR_LINE_WIDTH_AVAIL)
-      lg.setColor(col[1], col[2], col[3], 0.55 + pulse * 0.45)
-    else
-      lg.setLineWidth(BAR_LINE_WIDTH)
-      lg.setColor(col[1], col[2], col[3], 1)
-    end
-    lg.arc("line", "open", x, y, toolR, a1, a2)
+    -- Interior sliver tab.
+    lg.setLineWidth(SLIVER_LINE_WIDTH)
+    lg.setColor(col[1], col[2], col[3], 1)
+    lg.arc("line", "open", x, y, sliverR, a1, a2)
 
-    -- Dark center mark at the exact dot angle. When armed it's pushed brighter
-    -- (interpolated 50% toward white) to mark the chosen contact.
-    if isArmed then
-      lg.setColor((dark[1] + 1) * 0.5, (dark[2] + 1) * 0.5, (dark[3] + 1) * 0.5, 1)
-    else
-      lg.setColor(dark[1], dark[2], dark[3], 1)
-    end
-    lg.setLineWidth(BAR_LINE_WIDTH)
-    lg.arc("line", "open", x, y, toolR, cm1, cm2)
-
-    -- Armed halo: thin white arc just outside the bar.
+    -- Armed: thin white outline at the same radius.
     if isArmed then
       lg.setColor(1, 1, 1, 1)
       lg.setLineWidth(1.5)
-      lg.arc("line", "open", x, y, toolR + BAR_OUTLINE_OFFSET, a1, a2)
+      lg.arc("line", "open", x, y, sliverR, a1, a2)
+    end
+
+    -- Contact dot at the rim position.
+    local dotX = x + DOT_UX[d] * toolR
+    local dotY = y + DOT_UY[d] * toolR
+    lg.setColor(col[1], col[2], col[3], 1)
+    if isArmed then
+      lg.circle("fill", dotX, dotY, 4)
+      lg.setColor(1, 1, 1, 1)
+      lg.setLineWidth(1)
+      lg.circle("line", dotX, dotY, 4)
+    else
+      lg.circle("fill", dotX, dotY, 3)
     end
   end
 
@@ -474,7 +475,7 @@ fireFlip = function(self, coin, contactX, contactY, depth)
     -- Chains fired by that coin are already in the air; they don't gate
     -- further player input.
     if depth == 0 then self.activeCoin = nil end
-  end)
+  end, L.boardX, L.boardY, L.boardW, L.boardH)
 end
 
 -- After a coin lands at (lx, ly), check every OTHER live, flippable coin for
@@ -529,6 +530,13 @@ function Game:enter(prev, houseName)
   self.multiplier = 1
 
   rebuildLayout()
+
+  -- Randomise target position within the board each floor.
+  local tMargin = L.outerR + L.coinR + 24
+  L.targetCX = love.math.random(
+    L.boardX + tMargin, L.boardX + L.boardW - tMargin)
+  L.targetCY = love.math.random(
+    L.boardY + tMargin, L.boardY + L.boardH - tMargin)
 
   -- Prototype: every coin in the scatter is the same item (Coin). Future:
   -- per-floor item assignment, varied per scatter spot.
@@ -635,23 +643,38 @@ function Game:draw()
   lg.setColor(COLOR_BG)
   lg.rectangle("fill", 0, 0, L.W, L.H)
 
-  -- HUD strip.
-  lg.setColor(COLOR_TEXT)
-  lg.print("MARBLES  " .. self.marbles, 20, 22)
-  local multStr = "MULT  x" .. self.multiplier
-  local font = lg.getFont()
-  lg.print(multStr, L.W - font:getWidth(multStr) - 20, 22)
-  -- Floor threshold (secondary).
+  -- Left score panel.
+  lg.setColor(COLOR_PANEL[1], COLOR_PANEL[2], COLOR_PANEL[3])
+  lg.rectangle("fill", L.panelX, 0, L.panelW, L.panelH)
+  local px = L.panelX + 16
+  local py = 16
+  local lineH = 26
+  -- House name.
   lg.setColor(COLOR_TEXT_DIM)
-  local threshStr = "FLOOR " .. self.floor .. "   NEED " .. (FLOOR_THRESHOLDS[self.floor] or "?")
-  lg.printf(threshStr, 0, 52, L.W, "center")
+  lg.print(self.houseName or "?", px, py)
+  py = py + lineH + 6
+  -- Marble icon (tier-0 coin colour) + count.
+  local tier0col = Tiers[1].color
+  lg.setColor(tier0col[1], tier0col[2], tier0col[3])
+  lg.circle("fill", px + 7, py + 7, 7)
+  lg.setColor(COLOR_TEXT)
+  lg.print(tostring(self.marbles), px + 20, py)
+  py = py + lineH
+  -- Multiplier.
+  lg.setColor(COLOR_TEXT)
+  lg.print("x" .. self.multiplier, px, py)
+  py = py + lineH
+  -- Floor / threshold.
+  lg.setColor(COLOR_TEXT_DIM)
+  lg.print("FLOOR " .. self.floor .. "  NEED " .. (FLOOR_THRESHOLDS[self.floor] or "?"), px, py)
 
-  -- Board rectangle.
+  -- Thick dark border frame (drawn first; board surface sits inset inside it).
+  lg.setColor(COLOR_BORDER[1], COLOR_BORDER[2], COLOR_BORDER[3])
+  lg.rectangle("fill", L.borderX, L.borderY, L.borderW, L.borderH)
+
+  -- Inner playing surface.
   lg.setColor(COLOR_BOARD)
   lg.rectangle("fill", L.boardX, L.boardY, L.boardW, L.boardH)
-  lg.setColor(COLOR_BOARD_BORDER)
-  lg.setLineWidth(2)
-  lg.rectangle("line", L.boardX, L.boardY, L.boardW, L.boardH)
 
   -- Target rings (outer first so inner sit on top -- flat fills, no
   -- per-ring outline -- a single outer outline goes on last).
@@ -686,10 +709,6 @@ function Game:draw()
                    self.armedDotX, self.armedDotY)
   end
 
-  -- Bottom hint (temporary; replaced when the run/shop flow lands).
-  lg.setColor(COLOR_TEXT_DIM)
-  lg.printf("HOUSE: " .. self.houseName .. "   [M] map   [R] reset   [G] debug   [Esc] quit",
-    0, L.H - 24, L.W, "center")
   lg.setColor(1, 1, 1, 1)
 end
 
