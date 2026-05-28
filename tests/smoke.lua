@@ -247,34 +247,34 @@ function M.run()
   Game:enter(nil, "Grandma")
   local toolR2 = Game._L.toolR
   local Coin   = require("entities.coin")
+  -- New schema: each entry is a preallocated {idx=, coin=} pair table.
   local scratchConflict = {}
+  for i = 1, 6 do scratchConflict[i] = { idx = 0, coin = nil } end
 
-  -- 7a) Single dot inside coin. Coin (400, 400, r=14); tool at (400, 420):
-  --     top dot at (400, 408) -> dist 8 < 14 in; top-right (410.4, 414) dist
-  --     17.4 out; all others farther.
+  -- 7a) Single (dot, coin) pair inside coin. Coin (400, 400, r=14); tool at
+  --     (400, 420): top dot at (400, 408) dist 8 in; everything else out.
   local lone = { Coin(400, 400, 14) }
-  local hitCoin, hitDot, hitCount =
+  local hitCount =
     Game._findPressedCoin(lone, 400, 420, toolR2, scratchConflict)
-  check(c, "7a single dot inside coin -> auto-arm, dotIdx=1 (top), count=0",
-    hitCoin == lone[1] and hitDot == 1 and hitCount == 0)
+  check(c, "7a single dot inside coin -> count = 1 (auto-arm)",
+    hitCount == 1)
+  check(c, "7a.1 pair[1] = (dot 1 = top, lone[1])",
+    scratchConflict[1].idx == 1 and scratchConflict[1].coin == lone[1])
 
-  -- 7b) Tool far from any coin -> nil. (With the new tiny tool, putting
-  --     the center directly over a coin actually drops several dots inside
-  --     it, so the previous "center over coin" test premise doesn't hold.)
-  local farAway = Game._findPressedCoin(lone, 800, 800, toolR2, scratchConflict)
-  check(c, "7b tool far from any coin -> nil", farAway == nil)
+  -- 7b) Tool far from any coin -> 0.
+  local farCount = Game._findPressedCoin(lone, 800, 800, toolR2, scratchConflict)
+  check(c, "7b tool far from any coin -> count = 0", farCount == 0)
 
-  -- 7c) 2-dot conflict. Coin at (405, 400, r=12); tool at (400, 412):
-  --     top (400, 400) dist 5 in; top-right (410.4, 406) dist sqrt(29+36)
-  --     = 8.06 in; top-left (389.6, 406) dist sqrt(237+36) = 16.5 out;
-  --     bottom row all out.
+  -- 7c) 2-dot conflict on the SAME coin. Coin at (405, 400, r=12); tool at
+  --     (400, 412): top (400, 400) dist 5 in; top-right (410.4, 406) dist
+  --     ~8.06 in; rest out.
   local conflicted = { Coin(405, 400, 12) }
-  local cCoin, cDot, cCount =
+  local cCount =
     Game._findPressedCoin(conflicted, 400, 412, toolR2, scratchConflict)
-  check(c, "7c conflict: coin returned, dotIdx == nil, count == 2",
-    cCoin == conflicted[1] and cDot == nil and cCount == 2)
-  check(c, "7d conflict: list contains dots 1 (top) + 2 (top-right) in CW order",
-    scratchConflict[1] == 1 and scratchConflict[2] == 2)
+  check(c, "7c same-coin conflict: count == 2", cCount == 2)
+  check(c, "7d pair[1] = (dot 1, coin) and pair[2] = (dot 2, coin)",
+    scratchConflict[1].idx == 1 and scratchConflict[1].coin == conflicted[1]
+    and scratchConflict[2].idx == 2 and scratchConflict[2].coin == conflicted[1])
 
   -- 7e) End-to-end auto-arm: single-dot click fires.
   Game:enter(nil, "Grandma")
@@ -304,10 +304,11 @@ function M.run()
   Game:_refreshHover()
   check(c, "7h conflict established: count=2, idx=1 (default)",
     Game.conflictCount == 2 and Game.conflictIdx == 1)
-  check(c, "7i conflict list: [1, 2]",
-    Game.conflictDots[1] == 1 and Game.conflictDots[2] == 2)
-  check(c, "7j armedDotIdx = conflictDots[idx] = 1 (top)",
-    Game.armedDotIdx == 1)
+  check(c, "7i conflict list: [(1, coin), (2, coin)]",
+    Game.conflictDots[1].idx == 1 and Game.conflictDots[1].coin == conCoin
+    and Game.conflictDots[2].idx == 2 and Game.conflictDots[2].coin == conCoin)
+  check(c, "7j armedDotIdx = pair[idx].idx = 1 (top); hoveredCoin = conCoin",
+    Game.armedDotIdx == 1 and Game.hoveredCoin == conCoin)
 
   -- 7k) D cycles forward (idx 1 -> 2).
   Game:keypressed("d")
@@ -383,6 +384,44 @@ function M.run()
   check(c, "7w post-jitter: idx STILL == 2 (selection preserved)",
     Game.conflictCount == 2 and Game.conflictIdx == 2
     and Game.armedDotIdx == 2)
+
+  -- 7x) MULTI-COIN conflict: one dot in each of two different coins.
+  --     coin1 at (400, 388, r=8) -- top dot lands at its center.
+  --     coin2 at (400, 412, r=8) -- bottom dot lands at its center.
+  --     With toolR=12 and r=8, the other 4 dots are >= 12px from any coin
+  --     center -> out. Result: 2 pairs across 2 different coins.
+  local multi = { Coin(400, 388, 8), Coin(400, 412, 8) }
+  local mCount = Game._findPressedCoin(multi, 400, 400, toolR2, scratchConflict)
+  check(c, "7x multi-coin: count == 2", mCount == 2)
+  check(c, "7y multi-coin pair[1] = (dot 1, coin1)",
+    scratchConflict[1].idx == 1 and scratchConflict[1].coin == multi[1])
+  check(c, "7z multi-coin pair[2] = (dot 4, coin2)",
+    scratchConflict[2].idx == 4 and scratchConflict[2].coin == multi[2])
+
+  -- 7aa) End-to-end multi-coin conflict via Game state. Default selection
+  --      is pair[1] -> coin1 armed; A/D cycles to pair[2] -> coin2 armed;
+  --      click fires whichever pair's coin is currently selected.
+  Game:enter(nil, "Grandma")
+  Game.coins = { Coin(400, 388, 8), Coin(400, 412, 8) }
+  Game.toolX, Game.toolY = 400, 400
+  Game:_refreshHover()
+  check(c, "7aa multi-coin in-game: count=2, idx=1, hoveredCoin = coin1",
+    Game.conflictCount == 2 and Game.conflictIdx == 1
+    and Game.hoveredCoin == Game.coins[1] and Game.armedDotIdx == 1)
+
+  -- D cycles to pair[2] = (dot 4, coin2)
+  Game:keypressed("d")
+  check(c, "7bb D cycles to pair[2]: hoveredCoin = coin2, armed = dot 4",
+    Game.conflictIdx == 2 and Game.hoveredCoin == Game.coins[2]
+    and Game.armedDotIdx == 4)
+
+  -- Click fires the SELECTED pair's coin (coin2), not coin1.
+  local coin1Ref, coin2Ref = Game.coins[1], Game.coins[2]
+  Game:mousepressed(400, 400, 1)
+  check(c, "7cc click fires SELECTED pair's coin (coin2)",
+    coin2Ref.flipping and Game.activeCoin == coin2Ref)
+  check(c, "7dd coin1 untouched (other pair was not selected)",
+    not coin1Ref.flipping)
 
   -- ---------- (4) Region map + circle press + power/arc curves ----------
   print("\n[4/4] Coin:regionAt + Coin:pressedBy + Coin:launch:")
