@@ -251,12 +251,14 @@ function M.run()
   local scratchConflict = {}
   for i = 1, 6 do scratchConflict[i] = { idx = 0, coin = nil } end
 
-  -- 7a) Single (dot, coin) pair inside coin. Coin (400, 400, r=14); tool at
-  --     (400, 420): top dot at (400, 408) dist 8 in; everything else out.
-  local lone = { Coin(400, 400, 14) }
+  -- 7a) Single dot engages coin. Coin (400, 350, r=24); tool at (400, 400),
+  --     toolR=36, grab=14. Top dot (400, 364): dist to coin = 14, reach 38,
+  --     engaged. Top-right (431.18, 382): dist sqrt(972+1024)=44.7, OUT.
+  --     All others further. -> 1 pair.
+  local lone = { Coin(400, 350, 24) }
   local hitCount =
-    Game._findPressedCoin(lone, 400, 420, toolR2, scratchConflict)
-  check(c, "7a single dot inside coin -> count = 1 (auto-arm)",
+    Game._findPressedCoin(lone, 400, 400, toolR2, scratchConflict)
+  check(c, "7a single dot engaged -> count = 1 (auto-arm)",
     hitCount == 1)
   check(c, "7a.1 pair[1] = (dot 1 = top, lone[1])",
     scratchConflict[1].idx == 1 and scratchConflict[1].coin == lone[1])
@@ -265,23 +267,51 @@ function M.run()
   local farCount = Game._findPressedCoin(lone, 800, 800, toolR2, scratchConflict)
   check(c, "7b tool far from any coin -> count = 0", farCount == 0)
 
-  -- 7c) 2-dot conflict on the SAME coin. Coin at (405, 400, r=12); tool at
-  --     (400, 412): top (400, 400) dist 5 in; top-right (410.4, 406) dist
-  --     ~8.06 in; rest out.
-  local conflicted = { Coin(405, 400, 12) }
+  -- 7c) 2-dot conflict on the SAME coin. Coin (420, 370, r=20); tool at
+  --     (400, 400), toolR=36, reach 34. Top (400, 364) dist 20.9 < 34 in;
+  --     top-right (431.18, 382) dist sqrt(125+144)=16.4 < 34 in; all others
+  --     >= 47.8 out.
+  local conflicted = { Coin(420, 370, 20) }
   local cCount =
-    Game._findPressedCoin(conflicted, 400, 412, toolR2, scratchConflict)
+    Game._findPressedCoin(conflicted, 400, 400, toolR2, scratchConflict)
   check(c, "7c same-coin conflict: count == 2", cCount == 2)
   check(c, "7d pair[1] = (dot 1, coin) and pair[2] = (dot 2, coin)",
     scratchConflict[1].idx == 1 and scratchConflict[1].coin == conflicted[1]
     and scratchConflict[2].idx == 2 and scratchConflict[2].coin == conflicted[1])
 
-  -- 7e) End-to-end auto-arm: single-dot click fires.
+  -- 7d.1) Grab-zone engagement (dot OUTSIDE coin disc but within grab reach).
+  --       Coin (400, 360, r=2): top dot dist 4 > r=2 so disc test fails,
+  --       but 4 < r+grab = 16 -> engaged via grab zone.
+  local grabbed = { Coin(400, 360, 2) }
+  local gCount = Game._findPressedCoin(grabbed, 400, 400, toolR2, scratchConflict)
+  check(c, "7d.1 dot OUTSIDE disc but inside grab zone engages",
+    gCount == 1 and scratchConflict[1].idx == 1
+    and scratchConflict[1].coin == grabbed[1])
+
+  -- 7d.2) Per-dot NEAREST-coin pick: a dot near two coins claims the closer.
+  --       Top dot at (400, 364). Coin A (398, 365, r=10) dist sqrt(4+1)=2.24.
+  --       Coin B (410, 365, r=10) dist sqrt(100+1)=10.05. A is closer.
+  --       Both within reach 24, so without the nearest rule we'd get 2 pairs.
+  local twoNear = { Coin(398, 365, 10), Coin(410, 365, 10) }
+  local nCount = Game._findPressedCoin(twoNear, 400, 400, toolR2, scratchConflict)
+  check(c, "7d.2 dot near two coins picks the CLOSER one",
+    nCount >= 1 and scratchConflict[1].idx == 1
+    and scratchConflict[1].coin == twoNear[1])
+
+  -- 7d.3) findPressedCoin skips flipping/used coins.
+  local skipFlip = Coin(400, 350, 24); skipFlip.flipping = true
+  check(c, "7d.3 findPressedCoin skips flipping coins",
+    Game._findPressedCoin({skipFlip}, 400, 400, toolR2, scratchConflict) == 0)
+  local skipUsed = Coin(400, 350, 24); skipUsed.used = true
+  check(c, "7d.4 findPressedCoin skips used coins",
+    Game._findPressedCoin({skipUsed}, 400, 400, toolR2, scratchConflict) == 0)
+
+  -- 7e) End-to-end auto-arm: single-dot click fires. Geometry from 7a.
   Game:enter(nil, "Grandma")
   local edgeCoin = Game.coins[1]
-  edgeCoin.x, edgeCoin.y, edgeCoin.radius = 400, 400, 14
+  edgeCoin.x, edgeCoin.y, edgeCoin.radius = 400, 350, 24
   Game.coins = { edgeCoin }
-  Game:mousepressed(400, 420, 1)
+  Game:mousepressed(400, 400, 1)
   check(c, "7e single-dot click flips the coin", edgeCoin.flipping)
   check(c, "7f single-dot click sets activeCoin",
     Game.activeCoin == edgeCoin)
@@ -289,18 +319,19 @@ function M.run()
   -- 7g) Click with NO dot inside any coin does nothing.
   Game:enter(nil, "Grandma")
   local lonely = Game.coins[1]
-  lonely.x, lonely.y, lonely.radius = 400, 400, 14
+  lonely.x, lonely.y, lonely.radius = 400, 350, 24
   Game.coins = { lonely }
   Game:mousepressed(800, 800, 1)
   check(c, "7g click far from any coin does NOT flip",
     not lonely.flipping and Game.activeCoin == nil)
 
-  -- 7h) Conflict state via _refreshHover (no click yet). Same geometry as 7c.
+  -- 7h) Same-coin conflict via _refreshHover. Coin (420, 370, r=20); tool
+  --     at (400, 400) -> top + top-right both engaged.
   Game:enter(nil, "Grandma")
   local conCoin = Game.coins[1]
-  conCoin.x, conCoin.y, conCoin.radius = 405, 400, 12
+  conCoin.x, conCoin.y, conCoin.radius = 420, 370, 20
   Game.coins = { conCoin }
-  Game.toolX, Game.toolY = 400, 412
+  Game.toolX, Game.toolY = 400, 400
   Game:_refreshHover()
   check(c, "7h conflict established: count=2, idx=1 (default)",
     Game.conflictCount == 2 and Game.conflictIdx == 1)
@@ -328,11 +359,11 @@ function M.run()
   check(c, "7o right arrow: idx 1 -> 2", Game.conflictIdx == 2)
 
   -- 7p) Click confirms current selection (idx 2 = top-right dot).
-  --     Top-right dot at (410.4, 406). Coin at (405, 400, r=12).
-  --     offX = (410.4 - 405)/12 = 0.45, offY = (406 - 400)/12 = 0.5
+  --     Top-right dot at (431.18, 382). Coin (420, 370, r=20).
+  --     offX = (431.18 - 420)/20 = 0.559, offY = (382 - 370)/20 = 0.6
   --     -> bottom-right region cell -> angle = -3pi/4 (up-LEFT).
   --     Expected: targetX < coin.x and targetY < coin.y.
-  Game:mousepressed(400, 412, 1)
+  Game:mousepressed(400, 400, 1)
   check(c, "7p click fires currently selected dot (coin flipping)",
     conCoin.flipping and Game.activeCoin == conCoin)
   check(c, "7q click used top-right dot (coin flies UP-LEFT)",
@@ -355,9 +386,9 @@ function M.run()
   -- 7t) Conflict that EVAPORATES (tool moves away) clears without firing.
   Game:enter(nil, "Grandma")
   local moveCoin = Game.coins[1]
-  moveCoin.x, moveCoin.y, moveCoin.radius = 405, 400, 12
+  moveCoin.x, moveCoin.y, moveCoin.radius = 420, 370, 20
   Game.coins = { moveCoin }
-  Game.toolX, Game.toolY = 400, 412
+  Game.toolX, Game.toolY = 400, 400
   Game:_refreshHover()
   check(c, "7t mid-step: in conflict before move",
     Game.hoveredCoin == moveCoin and Game.conflictCount == 2)
@@ -371,57 +402,69 @@ function M.run()
   --     dots in the same coin should preserve the player's A/D choice.
   Game:enter(nil, "Grandma")
   local jitterCoin = Game.coins[1]
-  jitterCoin.x, jitterCoin.y, jitterCoin.radius = 405, 400, 12
+  jitterCoin.x, jitterCoin.y, jitterCoin.radius = 420, 370, 20
   Game.coins = { jitterCoin }
-  Game.toolX, Game.toolY = 400, 412
+  Game.toolX, Game.toolY = 400, 400
   Game:_refreshHover()
   Game:keypressed("d")  -- now idx=2 (top-right selected)
   check(c, "7v pre-jitter: idx == 2 (player chose top-right)",
     Game.conflictIdx == 2)
   -- Jitter the tool by 1px; same conflict dots should still be in.
-  Game.toolX, Game.toolY = 401, 412
+  Game.toolX, Game.toolY = 401, 400
   Game:_refreshHover()
   check(c, "7w post-jitter: idx STILL == 2 (selection preserved)",
     Game.conflictCount == 2 and Game.conflictIdx == 2
     and Game.armedDotIdx == 2)
 
-  -- 7x) MULTI-COIN conflict: one dot in each of two different coins.
-  --     coin1 at (400, 388, r=8) -- top dot lands at its center.
-  --     coin2 at (400, 412, r=8) -- bottom dot lands at its center.
-  --     With toolR=12 and r=8, the other 4 dots are >= 12px from any coin
-  --     center -> out. Result: 2 pairs across 2 different coins.
-  local multi = { Coin(400, 388, 8), Coin(400, 412, 8) }
+  -- 7x) CROSS-COIN conflict: tool parked between two coins, each engaged by
+  --     a different rim dot.
+  --     coin1 at (400, 350, r=24): top dot (400, 364) dist 14 < reach 38 in.
+  --                                 other dots >= 44.7 from coin1, out.
+  --     coin2 at (400, 450, r=24): bottom dot (400, 436) dist 14 in;
+  --                                 other dots out.
+  --     Result: 2 pairs across 2 different coins.
+  local cross1 = Coin(400, 350, 24)
+  local cross2 = Coin(400, 450, 24)
+  local multi  = { cross1, cross2 }
   local mCount = Game._findPressedCoin(multi, 400, 400, toolR2, scratchConflict)
-  check(c, "7x multi-coin: count == 2", mCount == 2)
-  check(c, "7y multi-coin pair[1] = (dot 1, coin1)",
-    scratchConflict[1].idx == 1 and scratchConflict[1].coin == multi[1])
-  check(c, "7z multi-coin pair[2] = (dot 4, coin2)",
-    scratchConflict[2].idx == 4 and scratchConflict[2].coin == multi[2])
+  check(c, "7x cross-coin: count == 2", mCount == 2)
+  check(c, "7y cross-coin pair[1] = (dot 1=top, cross1)",
+    scratchConflict[1].idx == 1 and scratchConflict[1].coin == cross1)
+  check(c, "7z cross-coin pair[2] = (dot 4=bottom, cross2)",
+    scratchConflict[2].idx == 4 and scratchConflict[2].coin == cross2)
 
-  -- 7aa) End-to-end multi-coin conflict via Game state. Default selection
-  --      is pair[1] -> coin1 armed; A/D cycles to pair[2] -> coin2 armed;
-  --      click fires whichever pair's coin is currently selected.
+  -- 7aa) End-to-end cross-coin conflict. Default = pair[1] -> coin1 armed.
   Game:enter(nil, "Grandma")
-  Game.coins = { Coin(400, 388, 8), Coin(400, 412, 8) }
+  Game.coins = { Coin(400, 350, 24), Coin(400, 450, 24) }
   Game.toolX, Game.toolY = 400, 400
   Game:_refreshHover()
-  check(c, "7aa multi-coin in-game: count=2, idx=1, hoveredCoin = coin1",
+  check(c, "7aa cross-coin in-game: count=2, idx=1, hoveredCoin = coin1",
     Game.conflictCount == 2 and Game.conflictIdx == 1
     and Game.hoveredCoin == Game.coins[1] and Game.armedDotIdx == 1)
 
-  -- D cycles to pair[2] = (dot 4, coin2)
+  -- 7bb) D cycles to pair[2] -> coin2 armed.
   Game:keypressed("d")
   check(c, "7bb D cycles to pair[2]: hoveredCoin = coin2, armed = dot 4",
     Game.conflictIdx == 2 and Game.hoveredCoin == Game.coins[2]
     and Game.armedDotIdx == 4)
 
-  -- Click fires the SELECTED pair's coin (coin2), not coin1.
+  -- 7cc/7dd) Click fires the SELECTED pair's coin (coin2), not coin1.
   local coin1Ref, coin2Ref = Game.coins[1], Game.coins[2]
   Game:mousepressed(400, 400, 1)
   check(c, "7cc click fires SELECTED pair's coin (coin2)",
     coin2Ref.flipping and Game.activeCoin == coin2Ref)
   check(c, "7dd coin1 untouched (other pair was not selected)",
     not coin1Ref.flipping)
+
+  -- 7ee) Left arrow cycles back to pair[1] = coin1 (after reset).
+  Game:enter(nil, "Grandma")
+  Game.coins = { Coin(400, 350, 24), Coin(400, 450, 24) }
+  Game.toolX, Game.toolY = 400, 400
+  Game:_refreshHover()
+  Game:keypressed("right")  -- idx 1 -> 2
+  Game:keypressed("left")   -- idx 2 -> 1
+  check(c, "7ee left arrow returns selection to coin1 (idx 1)",
+    Game.conflictIdx == 1 and Game.hoveredCoin == Game.coins[1])
 
   -- ---------- (4) Region map + circle press + power/arc curves ----------
   print("\n[4/4] Coin:regionAt + Coin:pressedBy + Coin:launch:")
@@ -491,41 +534,50 @@ function M.run()
   check(c, "8g out-of-disc tap clamps to a valid region (left direction)",
     r and approxEq(r.angle, pi))
 
-  -- 8h) pressedBy: point at coin center -> offDist == 0.
+  -- 8h) pressedBy at coin center -> offDist == 0.
   k = makeCoin()
   local ox, oy, od = k:pressedBy(200, 600)
   check(c, "8h pressedBy at center: offDist == 0",
     ox and approxEq(od, 0))
 
-  -- 8i) pressedBy: point inside coin off-center -> valid (offX, offY, offDist).
+  -- 8i) pressedBy off-center inside coin -> valid (offX, offY, offDist).
   --     7px right of center, R=14 -> offX=0.5, offY=0, offDist=0.5.
   k = makeCoin()
   ox, oy, od = k:pressedBy(207, 600)
   check(c, "8i pressedBy off-center inside: returns (0.5, 0, 0.5)",
     ox and approxEq(ox, 0.5) and approxEq(oy, 0) and approxEq(od, 0.5))
 
-  -- 8j) pressedBy clearly outside the coin -> nil.
+  -- 8j) pressedBy is now a PURE OFFSET CALCULATOR. Outside-coin points clamp
+  --     to offDist = 1 instead of returning nil. (The "is this dot engaged?"
+  --     decision now lives in findPressedCoin's grab-zone math.)
   k = makeCoin()
-  check(c, "8j pressedBy outside coin -> nil",
-    k:pressedBy(220, 600) == nil)
+  ox, oy, od = k:pressedBy(220, 600)  -- 20px right of center, R=14
+  check(c, "8j pressedBy outside coin clamps to offDist == 1 (no nil)",
+    ox and approxEq(od, 1) and approxEq(ox, 1) and approxEq(oy, 0))
 
-  -- 8k) pressedBy at the EXACT edge (d^2 == r^2) -> nil (strict less-than).
+  -- 8k) pressedBy at the EXACT edge (d == r) -> offDist == 1 (clamped).
   k = makeCoin()
-  check(c, "8k pressedBy at exact edge -> nil",
-    k:pressedBy(214, 600) == nil)
+  ox, oy, od = k:pressedBy(214, 600)
+  check(c, "8k pressedBy at exact edge -> offDist == 1 (clamped)",
+    ox and approxEq(od, 1))
 
-  -- 8k.1) Just inside the edge -> hit, offDist near 1.
+  -- 8k.1) Just inside the edge -> not clamped, offDist near 1.
   k = makeCoin()
   ox, oy, od = k:pressedBy(213.5, 600)
-  check(c, "8k.1 pressedBy just inside edge -> hit, offDist near 1",
+  check(c, "8k.1 pressedBy just inside edge -> offDist near 1 (not clamped)",
     ox and od and od < 1 and od > 0.95)
 
-  -- 8l) pressedBy on a flipping coin -> nil.
+  -- 8l) pressedBy now returns offsets EVEN for flipping coins (flipping/used
+  --     filter moved to findPressedCoin -- pressedBy is pure math).
   k = makeCoin(); k.flipping = true
-  check(c, "8l pressedBy flipping coin -> nil", k:pressedBy(200, 600) == nil)
-  -- 8m) pressedBy on a used coin -> nil.
+  ox, oy, od = k:pressedBy(200, 600)
+  check(c, "8l pressedBy on flipping coin still returns offsets",
+    ox and approxEq(od, 0))
+  -- 8m) Same for used coins.
   k = makeCoin(); k.used = true
-  check(c, "8m pressedBy used coin -> nil",     k:pressedBy(200, 600) == nil)
+  ox, oy, od = k:pressedBy(200, 600)
+  check(c, "8m pressedBy on used coin still returns offsets",
+    ox and approxEq(od, 0))
 
   -- 8n) launch(angle, power, arc, item, cb) lands at coin + (cos*power, sin*power).
   k = makeCoin()

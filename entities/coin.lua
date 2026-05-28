@@ -73,22 +73,21 @@ function Coin:contains(px, py)
   return (dx * dx + dy * dy) <= (self.radius * self.radius)
 end
 
--- Point-in-coin contact test. (px, py) is a single screen point -- typically
--- one of the tool's 4 rim dots, resolved upstream. Returns the contact in
--- coin-local normalized space (coin spans -1..1) when the point is strictly
--- inside the coin's radius, else nil. Flipping/used coins are not contactable.
+-- Pure offset calculator. (px, py) is a single screen point -- typically a
+-- tool rim-dot position resolved upstream. Returns the contact in coin-local
+-- normalized space (coin spans -1..1). Points outside the coin's disc clamp
+-- to the unit circle (offDist == 1), which lets a dot engaged via the grab
+-- zone -- sitting just outside the coin's outline -- resolve to an edge
+-- contact and trigger the outer-zone (long, flat) shot.
 --
--- Returns: offX, offY, offDist
---   each in coin-local normalized space; offDist in [0, 1], 0 = center, 1 = edge.
--- The clamp protects against floating-point drift at the boundary.
+-- Always returns three numbers: never nil. The "is this dot engaged with
+-- this coin?" decision lives in findPressedCoin, not here.
+--
+-- Returns: offX, offY, offDist (offDist in [0, 1]; 0 = center, 1 = edge).
 function Coin:pressedBy(px, py)
-  if self.flipping or self.used then return nil end
-  local dx = px - self.x
-  local dy = py - self.y
-  local r  = self.radius
-  if (dx * dx + dy * dy) >= (r * r) then return nil end
-  local offX = dx / r
-  local offY = dy / r
+  local r    = self.radius
+  local offX = (px - self.x) / r
+  local offY = (py - self.y) / r
   local mag  = sqrt(offX * offX + offY * offY)
   if mag > 1 then
     local s = 1 / mag

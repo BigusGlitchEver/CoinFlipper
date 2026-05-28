@@ -51,9 +51,10 @@ local function resolveShot(item, offDist)
 end
 
 -- Tool radius is hoisted into L (rebuildLayout) so drawing and hit-testing
--- agree on the same number. 0.5x coin radius (== 12px at coinR=24) makes the
--- tool compact -- the player aims precisely with the rim dots, which scale
--- with toolR so the whole assembly shrinks together.
+-- agree on the same number. 1.5x coin radius (== 36px at coinR=24) gives
+-- enough rim room that adjacent coins can each be "claimed" by a different
+-- dot, which is what enables cross-coin conflict. The rim dots scale with
+-- toolR so the whole assembly grows together.
 local TOOL_R_FACTOR = 1.5
 
 -- ---------- Rim dots & Simon Says arc bars ----------
@@ -159,6 +160,12 @@ local function rebuildLayout()
   L.coinR = COIN_RADIUS_AT_390W
   -- Tool size derived from coin radius. Read by drawing AND hit-testing.
   L.toolR = L.coinR * TOOL_R_FACTOR
+  -- A rim dot engages a coin when its distance from the coin's center is
+  -- under (coin.radius + grabMargin). This lets a dot "grab" a coin from
+  -- just outside its outline -- crucial for cross-coin conflict, since the
+  -- tool sitting between two adjacent coins gets a different dot to reach
+  -- toward each. Computed once per layout rebuild -- no per-frame math.
+  L.grabMargin = floor(L.coinR * 0.6)  -- ~14px at coinR=24
 end
 
 -- ---------- Coin scatter ----------
@@ -343,34 +350,43 @@ end
 
 -- ---------- Press resolution ----------
 
--- Generalized contact resolution: collect EVERY (dot, coin) pair where a rim
--- dot lands strictly inside a live coin's radius, across ALL coins. Each
--- entry in outConflict is a preallocated table {idx, coin} that we mutate
--- in place (no per-frame allocation).
+-- Per-dot nearest-coin resolution within the grab zone. EACH of the 6 rim
+-- dots contributes AT MOST ONE pair: for that dot, find the NEAREST live
+-- flippable coin whose center is within (coin.radius + L.grabMargin) of the
+-- dot. A dot near two coins picks the closer one; a dot near none contributes
+-- nothing. Each entry in outConflict is a preallocated {idx, coin} slot
+-- mutated in place (zero per-frame allocation).
 --
 -- Returns count only:
 --   0  -> no contact
 --   1  -> auto-arm (single pair; caller uses outConflict[1])
---   2+ -> conflict (player cycles through outConflict[1..count])
--- Entries are appended in (dot order x coin order) iteration; the caller
--- treats the list as opaque ordering.
+--   2+ -> conflict (player cycles through outConflict[1..count] with A/D)
 local function findPressedCoin(coins, toolX, toolY, toolR, outConflict)
+  local grab  = L.grabMargin
   local count = 0
   for d = 1, 6 do
     local dxd = toolX + DOT_UX[d] * toolR
     local dyd = toolY + DOT_UY[d] * toolR
+    -- Find the closest live coin this dot can engage.
+    local bestCoin, bestD2 = nil, huge
     for i = 1, #coins do
       local coin = coins[i]
       if not coin.flipping and not coin.used then
-        local dx = dxd - coin.x
-        local dy = dyd - coin.y
-        if (dx * dx + dy * dy) < (coin.radius * coin.radius) then
-          count = count + 1
-          local slot = outConflict[count]
-          slot.idx  = d
-          slot.coin = coin
+        local dx    = dxd - coin.x
+        local dy    = dyd - coin.y
+        local d2    = dx * dx + dy * dy
+        local reach = coin.radius + grab
+        if d2 < (reach * reach) and d2 < bestD2 then
+          bestCoin = coin
+          bestD2   = d2
         end
       end
+    end
+    if bestCoin then
+      count = count + 1
+      local slot = outConflict[count]
+      slot.idx  = d
+      slot.coin = bestCoin
     end
   end
   return count
@@ -632,9 +648,10 @@ function Game:mousepressed(x, y, button)
 end
 
 function Game:keypressed(k)
-  -- A/D and left/right cycle through the conflicting dots when 2+ are inside
-  -- the same coin. They do NOTHING when there is no conflict. The cycle
-  -- wraps. Click is still the trigger -- selection just changes which dot.
+  -- A/D and left/right cycle through ALL active (dot, coin) pairs whenever
+  -- 2+ rim dots are engaged with any coins (same coin OR different coins).
+  -- They do NOTHING when fewer than 2 pairs are engaged. The cycle wraps.
+  -- Click is still the trigger -- selection just chooses which pair fires.
   if not self.activeCoin and self.conflictCount > 1 then
     if k == "a" or k == "left" then
       self.conflictIdx = self.conflictIdx - 1
