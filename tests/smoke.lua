@@ -196,6 +196,34 @@ function M.run()
   check(c, "5v scoring hit does NOT increment tier (stays at 1)",
     stayCoin.tier == 1)
 
+  -- 5w-5y) Disc-overlap: coin DISC must clip a zone, not just its center.
+  --   coinR14=14. outerR=65. bullR=outerR*0.33~=21.45.
+  local coinR14 = 14
+
+  -- 5w) d = outerR+coinR-1: disc grazes outer ring -> scores outer.
+  Game.marbles, Game.multiplier = 0, 1
+  local discOuter = CoinClass(0, 0, coinR14)
+  ring, gain = Game._resolveFlip(Game, discOuter,
+    L.targetCX + L.outerR + coinR14 - 1, L.targetCY)
+  check(c, "5w disc clips outer (d=outerR+coinR-1): scores outer",
+    ring == "outer", "ring=" .. ring)
+
+  -- 5x) d = outerR+coinR+1: disc fully outside -> on-board miss.
+  Game.marbles, Game.multiplier = 0, 1
+  local discOutside = CoinClass(0, 0, coinR14)
+  ring, gain = Game._resolveFlip(Game, discOutside,
+    L.targetCX + L.outerR + coinR14 + 1, L.targetCY)
+  check(c, "5x disc fully outside (d=outerR+coinR+1): on-board miss",
+    ring == "on_board_miss", "ring=" .. ring)
+
+  -- 5y) d = bullR+coinR-1: disc clips bull -> scores bull.
+  Game.marbles, Game.multiplier = 0, 1
+  local discBull = CoinClass(0, 0, coinR14)
+  ring, gain = Game._resolveFlip(Game, discBull,
+    L.targetCX + L.bullR + coinR14 - 1, L.targetCY)
+  check(c, "5y disc clips bull (d=bullR+coinR-1): scores bull",
+    ring == "bull", "ring=" .. ring)
+
   -- 6: tap-on-coin input model.
   -- Re-enter to get a fresh scatter and clean state.
   Game:enter(nil, "Grandma")
@@ -233,7 +261,9 @@ function M.run()
   -- Derive whether this shot scored from the landing distance to the target.
   local ldx = firstCoin.targetX - L.targetCX
   local ldy = firstCoin.targetY - L.targetCY
-  local shotScored = (ldx * ldx + ldy * ldy) <= (L.outerR * L.outerR)
+  local cr_first   = firstCoin.radius
+  local outer_t_sq = (L.outerR + cr_first) * (L.outerR + cr_first)
+  local shotScored = (ldx * ldx + ldy * ldy) < outer_t_sq
   check(c, "6i scored -> coin.used; miss -> coin still live",
     firstCoin.used == shotScored)
   check(c, "6k contains() is inverse of used",
