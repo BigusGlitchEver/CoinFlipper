@@ -57,12 +57,6 @@ end
 -- toolR so the whole assembly grows together.
 local TOOL_R_FACTOR = 1.5
 
--- Dot positions as a fraction of toolR. < 1 puts dots inside the shape.
--- Hit-testing and armed-dot positions use the same factor so what you
--- see is exactly what fires.
-local CIRCLE_DOT_R_FACTOR = 0.68  -- 68% of toolR -> inside the disc
-local TRI_DOT_R_FACTOR    = 0.60  -- 60% of toolR -> inside the triangle body
-
 -- ---------- Rim dots & Simon Says arc bars ----------
 -- The 6 contact "dots" are still single points for collision (one per 60deg
 -- around the rim, starting at 270deg = top, going clockwise). VISUALLY they
@@ -295,39 +289,17 @@ end
 
 -- Triangle tool: equilateral triangle (tip pointing up). The three vertices
 -- ARE the contact points; no external dots. Tips highlight when armed.
-local function drawTriangleToolAt(x, y, armedDot)
+-- Triangle tool: translucent body + clean edge outline. The edges ARE the contact surface.
+local function drawTriangleToolAt(x, y)
   local r   = L.toolR
   local v1x = x + TRI_UX[1] * r;  local v1y = y + TRI_UY[1] * r
   local v2x = x + TRI_UX[2] * r;  local v2y = y + TRI_UY[2] * r
   local v3x = x + TRI_UX[3] * r;  local v3y = y + TRI_UY[3] * r
-  -- Translucent body.
-  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.30)
+  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.22)
   lg.polygon("fill", v1x, v1y, v2x, v2y, v3x, v3y)
-  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.55)
-  lg.setLineWidth(1.5)
+  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.75)
+  lg.setLineWidth(2)
   lg.polygon("line", v1x, v1y, v2x, v2y, v3x, v3y)
-  -- Contact dots inside the triangle body at TRI_DOT_R_FACTOR of toolR.
-  -- Outline stays at full r; dots are pulled inward so they're part of the shape.
-  local dr  = r * TRI_DOT_R_FACTOR
-  local d1x = x + TRI_UX[1] * dr;  local d1y = y + TRI_UY[1] * dr
-  local d2x = x + TRI_UX[2] * dr;  local d2y = y + TRI_UY[2] * dr
-  local d3x = x + TRI_UX[3] * dr;  local d3y = y + TRI_UY[3] * dr
-  local vx, vy
-  for d = 1, 3 do
-    if     d == 1 then vx = d1x; vy = d1y
-    elseif d == 2 then vx = d2x; vy = d2y
-    else               vx = d3x; vy = d3y
-    end
-    local col     = TRI_COLORS[d]
-    local isArmed = (d == armedDot)
-    lg.setColor(col[1], col[2], col[3], 1)
-    lg.circle("fill", vx, vy, isArmed and 7 or 5)
-    if isArmed then
-      lg.setColor(1, 1, 1, 1)
-      lg.setLineWidth(1.5)
-      lg.circle("line", vx, vy, 7)
-    end
-  end
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -340,46 +312,14 @@ end
 --   INACTIVE   : base color, normal thickness, no halo.
 -- conflictDots entries are {idx, coin} pairs; we just need the idx for "is
 -- this bar in the conflict list?" so we don't allocate when reading.
-local function drawToolAt(x, y, armedDot, conflictDots, conflictCount)
+-- Circle tool: translucent disc + clean rim ring. The rim IS the contact surface.
+local function drawToolAt(x, y)
   local toolR = L.toolR
-  -- Hub disc (translucent so coins underneath show through).
-  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.45)
-  lg.circle("fill", x, y, toolR - 4)
-
-  local sliverR = toolR - 5   -- interior sliver radius
-  for d = 1, 6 do
-    local cAng   = DOT_ANGLES_RAD[d]
-    local a1     = cAng - SLIVER_HALF_WIDTH
-    local a2     = cAng + SLIVER_HALF_WIDTH
-    local col    = DOT_COLORS[d]
-    local isArmed = (d == armedDot)
-
-    -- Interior sliver tab.
-    lg.setLineWidth(SLIVER_LINE_WIDTH)
-    lg.setColor(col[1], col[2], col[3], 1)
-    lg.arc("line", "open", x, y, sliverR, a1, a2)
-
-    -- Armed: thin white outline at the same radius.
-    if isArmed then
-      lg.setColor(1, 1, 1, 1)
-      lg.setLineWidth(1.5)
-      lg.arc("line", "open", x, y, sliverR, a1, a2)
-    end
-
-    -- Contact dot inside the disc (at CIRCLE_DOT_R_FACTOR of toolR).
-    local dotX = x + DOT_UX[d] * (toolR * CIRCLE_DOT_R_FACTOR)
-    local dotY = y + DOT_UY[d] * (toolR * CIRCLE_DOT_R_FACTOR)
-    lg.setColor(col[1], col[2], col[3], 1)
-    if isArmed then
-      lg.circle("fill", dotX, dotY, 4)
-      lg.setColor(1, 1, 1, 1)
-      lg.setLineWidth(1)
-      lg.circle("line", dotX, dotY, 4)
-    else
-      lg.circle("fill", dotX, dotY, 3)
-    end
-  end
-
+  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.30)
+  lg.circle("fill", x, y, toolR)
+  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.75)
+  lg.setLineWidth(2)
+  lg.circle("line", x, y, toolR)
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -478,36 +418,90 @@ end
 --   0  -> no contact
 --   1  -> auto-arm (single pair; caller uses outConflict[1])
 --   2+ -> conflict (player cycles through outConflict[1..count] with A/D)
+-- Contact detection: the tool EDGE (circle rim / triangle sides) is the
+-- contact surface. A coin registers a hit when its body overlaps the edge.
 local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriangle)
-  local ux      = isTriangle and TRI_UX or DOT_UX
-  local uy      = isTriangle and TRI_UY or DOT_UY
-  local ndots   = isTriangle and 3 or 6
-  local dotFact = isTriangle and TRI_DOT_R_FACTOR or CIRCLE_DOT_R_FACTOR
-  local dotR    = toolR * dotFact
-  local count   = 0
-  for d = 1, ndots do
-    local dxd = toolX + ux[d] * dotR
-    local dyd = toolY + uy[d] * dotR
-    -- Find the closest live coin this dot is strictly INSIDE.
-    local bestCoin, bestD2 = nil, huge
+  local count = 0
+  if isTriangle then
+    -- Triangle: for each coin, find the closest point on any of the 3 edges.
+    -- Contact when that distance < coin.radius. Deduplication is natural
+    -- because we loop coins in the outer loop.
+    local v1x = toolX + TRI_UX[1] * toolR;  local v1y = toolY + TRI_UY[1] * toolR
+    local v2x = toolX + TRI_UX[2] * toolR;  local v2y = toolY + TRI_UY[2] * toolR
+    local v3x = toolX + TRI_UX[3] * toolR;  local v3y = toolY + TRI_UY[3] * toolR
     for i = 1, #coins do
       local coin = coins[i]
       if not coin.flipping and not coin.used then
-        local dx = dxd - coin.x
-        local dy = dyd - coin.y
-        local d2 = dx * dx + dy * dy
-        local r  = coin.radius
-        if d2 < (r * r) and d2 < bestD2 then
-          bestCoin = coin
-          bestD2   = d2
+        local cr = coin.radius
+        local cx = coin.x;  local cy = coin.y
+        local bestDist = huge
+        local bestPX, bestPY = 0, 0
+        -- Edge v1->v2
+        do
+          local ex = v2x-v1x;  local ey = v2y-v1y
+          local len2 = ex*ex + ey*ey
+          local t = ((cx-v1x)*ex + (cy-v1y)*ey) / len2
+          if t < 0 then t = 0 elseif t > 1 then t = 1 end
+          local px = v1x+t*ex;  local py = v1y+t*ey
+          local ddx = cx-px;    local ddy = cy-py
+          local d = sqrt(ddx*ddx + ddy*ddy)
+          if d < cr and d < bestDist then bestDist=d; bestPX=px; bestPY=py end
+        end
+        -- Edge v2->v3
+        do
+          local ex = v3x-v2x;  local ey = v3y-v2y
+          local len2 = ex*ex + ey*ey
+          local t = ((cx-v2x)*ex + (cy-v2y)*ey) / len2
+          if t < 0 then t = 0 elseif t > 1 then t = 1 end
+          local px = v2x+t*ex;  local py = v2y+t*ey
+          local ddx = cx-px;    local ddy = cy-py
+          local d = sqrt(ddx*ddx + ddy*ddy)
+          if d < cr and d < bestDist then bestDist=d; bestPX=px; bestPY=py end
+        end
+        -- Edge v3->v1
+        do
+          local ex = v1x-v3x;  local ey = v1y-v3y
+          local len2 = ex*ex + ey*ey
+          local t = ((cx-v3x)*ex + (cy-v3y)*ey) / len2
+          if t < 0 then t = 0 elseif t > 1 then t = 1 end
+          local px = v3x+t*ex;  local py = v3y+t*ey
+          local ddx = cx-px;    local ddy = cy-py
+          local d = sqrt(ddx*ddx + ddy*ddy)
+          if d < cr and d < bestDist then bestDist=d; bestPX=px; bestPY=py end
+        end
+        if bestDist < cr then
+          count = count + 1
+          local slot = outConflict[count]
+          slot.contactX = bestPX
+          slot.contactY = bestPY
+          slot.coin     = coin
+          if count == 6 then break end
         end
       end
     end
-    if bestCoin then
-      count = count + 1
-      local slot = outConflict[count]
-      slot.idx  = d
-      slot.coin = bestCoin
+  else
+    -- Circle: coin overlaps the rim when |dist(toolCenter, coinCenter) - toolR|
+    -- < coin.radius. Contact point is the rim point nearest to the coin center.
+    for i = 1, #coins do
+      local coin = coins[i]
+      if not coin.flipping and not coin.used then
+        local dx   = coin.x - toolX
+        local dy   = coin.y - toolY
+        local dist = sqrt(dx*dx + dy*dy)
+        if dist > 1 then
+          local rimDist = dist - toolR
+          if rimDist < 0 then rimDist = -rimDist end
+          if rimDist < coin.radius then
+            count = count + 1
+            local slot = outConflict[count]
+            local inv  = toolR / dist
+            slot.contactX = toolX + dx * inv
+            slot.contactY = toolY + dy * inv
+            slot.coin     = coin
+            if count == 6 then break end
+          end
+        end
+      end
     end
   end
   return count
@@ -680,9 +674,10 @@ function Game:enter(prev, houseName)
   -- conflictIdx is the index into conflictDots of the currently SELECTED pair.
   self.conflictDots   = self.conflictDots or {}
   for i = 1, 6 do
-    self.conflictDots[i] = self.conflictDots[i] or { idx = 0, coin = nil }
-    self.conflictDots[i].idx  = 0
-    self.conflictDots[i].coin = nil
+    self.conflictDots[i] = self.conflictDots[i] or { contactX = 0, contactY = 0, coin = nil }
+    self.conflictDots[i].contactX = 0
+    self.conflictDots[i].contactY = 0
+    self.conflictDots[i].coin     = nil
   end
   self.conflictCount  = 0
   self.conflictIdx    = 1
@@ -711,20 +706,15 @@ end
 function Game:_updateArmed()
   if self.conflictCount == 0 then
     self.hoveredCoin = nil
-    self.armedDotIdx = nil
     self.armedDotX   = nil
     self.armedDotY   = nil
     return
   end
-  local i = (self.conflictCount == 1) and 1 or self.conflictIdx
-  local pair = self.conflictDots[i]
+  local i        = (self.conflictCount == 1) and 1 or self.conflictIdx
+  local pair     = self.conflictDots[i]
   self.hoveredCoin = pair.coin
-  self.armedDotIdx = pair.idx
-  local ardUX    = (self.toolType == TOOL_TRIANGLE) and TRI_UX or DOT_UX
-  local ardUY    = (self.toolType == TOOL_TRIANGLE) and TRI_UY or DOT_UY
-  local ardFact  = (self.toolType == TOOL_TRIANGLE) and TRI_DOT_R_FACTOR or CIRCLE_DOT_R_FACTOR
-  self.armedDotX = self.toolX + ardUX[pair.idx] * L.toolR * ardFact
-  self.armedDotY = self.toolY + ardUY[pair.idx] * L.toolR * ardFact
+  self.armedDotX   = pair.contactX
+  self.armedDotY   = pair.contactY
 end
 
 -- Recompute hover/conflict state from the current self.toolX / self.toolY.
@@ -732,10 +722,10 @@ end
 -- the click decision). Preserves the player's previously-selected PAIR (by
 -- idx + coin identity) across tool jitter so A/D choices don't reset.
 function Game:_refreshHover()
-  local prevIdx, prevCoin
+  local prevCoin
   if self.conflictCount > 0 then
     local prev = self.conflictDots[self.conflictIdx]
-    if prev then prevIdx, prevCoin = prev.idx, prev.coin end
+    if prev then prevCoin = prev.coin end
   end
 
   local count = findPressedCoin(
@@ -746,12 +736,12 @@ function Game:_refreshHover()
   if count <= 1 then
     self.conflictIdx = 1
   else
-    -- Try to preserve previous (idx, coin) selection.
+    -- Preserve previous coin selection if it is still in contact.
     local newIdx = 1
-    if prevIdx then
+    if prevCoin then
       for i = 1, count do
         local p = self.conflictDots[i]
-        if p.idx == prevIdx and p.coin == prevCoin then newIdx = i; break end
+        if p.coin == prevCoin then newIdx = i; break end
       end
     end
     self.conflictIdx = newIdx
@@ -924,10 +914,18 @@ function Game:draw()
   -- rim with dark center marks at the exact contact angles. The armed bar
   -- gets a white halo; conflict-available bars pulse thicker.
   if self.toolType == TOOL_TRIANGLE then
-    drawTriangleToolAt(self.toolX, self.toolY, self.armedDotIdx)
+    drawTriangleToolAt(self.toolX, self.toolY)
   else
-    drawToolAt(self.toolX, self.toolY, self.armedDotIdx,
-               self.conflictDots, self.conflictCount)
+    drawToolAt(self.toolX, self.toolY)
+  end
+  -- Armed contact flash: bright dot exactly where the edge meets the coin.
+  if self.armedDotX then
+    lg.setColor(1, 1, 1, 0.92)
+    lg.circle("fill", self.armedDotX, self.armedDotY, 5)
+    lg.setColor(1, 1, 1, 0.38)
+    lg.setLineWidth(1.5)
+    lg.circle("line", self.armedDotX, self.armedDotY, 5)
+    lg.setColor(1, 1, 1, 1)
   end
 
   -- Region debug overlay (press 'd' to toggle). On top of everything.
