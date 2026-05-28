@@ -57,6 +57,12 @@ end
 -- toolR so the whole assembly grows together.
 local TOOL_R_FACTOR = 1.5
 
+-- Dot positions as a fraction of toolR. < 1 puts dots inside the shape.
+-- Hit-testing and armed-dot positions use the same factor so what you
+-- see is exactly what fires.
+local CIRCLE_DOT_R_FACTOR = 0.68  -- 68% of toolR -> inside the disc
+local TRI_DOT_R_FACTOR    = 0.60  -- 60% of toolR -> inside the triangle body
+
 -- ---------- Rim dots & Simon Says arc bars ----------
 -- The 6 contact "dots" are still single points for collision (one per 60deg
 -- around the rim, starting at 270deg = top, going clockwise). VISUALLY they
@@ -300,12 +306,17 @@ local function drawTriangleToolAt(x, y, armedDot)
   lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.55)
   lg.setLineWidth(1.5)
   lg.polygon("line", v1x, v1y, v2x, v2y, v3x, v3y)
-  -- Tips are the actual contact points; no external dots.
+  -- Contact dots inside the triangle body at TRI_DOT_R_FACTOR of toolR.
+  -- Outline stays at full r; dots are pulled inward so they're part of the shape.
+  local dr  = r * TRI_DOT_R_FACTOR
+  local d1x = x + TRI_UX[1] * dr;  local d1y = y + TRI_UY[1] * dr
+  local d2x = x + TRI_UX[2] * dr;  local d2y = y + TRI_UY[2] * dr
+  local d3x = x + TRI_UX[3] * dr;  local d3y = y + TRI_UY[3] * dr
   local vx, vy
   for d = 1, 3 do
-    if     d == 1 then vx = v1x; vy = v1y
-    elseif d == 2 then vx = v2x; vy = v2y
-    else               vx = v3x; vy = v3y
+    if     d == 1 then vx = d1x; vy = d1y
+    elseif d == 2 then vx = d2x; vy = d2y
+    else               vx = d3x; vy = d3y
     end
     local col     = TRI_COLORS[d]
     local isArmed = (d == armedDot)
@@ -355,9 +366,9 @@ local function drawToolAt(x, y, armedDot, conflictDots, conflictCount)
       lg.arc("line", "open", x, y, sliverR, a1, a2)
     end
 
-    -- Contact dot at the rim position.
-    local dotX = x + DOT_UX[d] * toolR
-    local dotY = y + DOT_UY[d] * toolR
+    -- Contact dot inside the disc (at CIRCLE_DOT_R_FACTOR of toolR).
+    local dotX = x + DOT_UX[d] * (toolR * CIRCLE_DOT_R_FACTOR)
+    local dotY = y + DOT_UY[d] * (toolR * CIRCLE_DOT_R_FACTOR)
     lg.setColor(col[1], col[2], col[3], 1)
     if isArmed then
       lg.circle("fill", dotX, dotY, 4)
@@ -468,13 +479,15 @@ end
 --   1  -> auto-arm (single pair; caller uses outConflict[1])
 --   2+ -> conflict (player cycles through outConflict[1..count] with A/D)
 local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriangle)
-  local ux    = isTriangle and TRI_UX or DOT_UX
-  local uy    = isTriangle and TRI_UY or DOT_UY
-  local ndots = isTriangle and 3 or 6
-  local count = 0
+  local ux      = isTriangle and TRI_UX or DOT_UX
+  local uy      = isTriangle and TRI_UY or DOT_UY
+  local ndots   = isTriangle and 3 or 6
+  local dotFact = isTriangle and TRI_DOT_R_FACTOR or CIRCLE_DOT_R_FACTOR
+  local dotR    = toolR * dotFact
+  local count   = 0
   for d = 1, ndots do
-    local dxd = toolX + ux[d] * toolR
-    local dyd = toolY + uy[d] * toolR
+    local dxd = toolX + ux[d] * dotR
+    local dyd = toolY + uy[d] * dotR
     -- Find the closest live coin this dot is strictly INSIDE.
     local bestCoin, bestD2 = nil, huge
     for i = 1, #coins do
@@ -707,10 +720,11 @@ function Game:_updateArmed()
   local pair = self.conflictDots[i]
   self.hoveredCoin = pair.coin
   self.armedDotIdx = pair.idx
-  local ardUX = (self.toolType == TOOL_TRIANGLE) and TRI_UX or DOT_UX
-  local ardUY = (self.toolType == TOOL_TRIANGLE) and TRI_UY or DOT_UY
-  self.armedDotX   = self.toolX + ardUX[pair.idx] * L.toolR
-  self.armedDotY   = self.toolY + ardUY[pair.idx] * L.toolR
+  local ardUX    = (self.toolType == TOOL_TRIANGLE) and TRI_UX or DOT_UX
+  local ardUY    = (self.toolType == TOOL_TRIANGLE) and TRI_UY or DOT_UY
+  local ardFact  = (self.toolType == TOOL_TRIANGLE) and TRI_DOT_R_FACTOR or CIRCLE_DOT_R_FACTOR
+  self.armedDotX = self.toolX + ardUX[pair.idx] * L.toolR * ardFact
+  self.armedDotY = self.toolY + ardUY[pair.idx] * L.toolR * ardFact
 end
 
 -- Recompute hover/conflict state from the current self.toolX / self.toolY.
