@@ -54,7 +54,7 @@ end
 -- agree on the same number. 0.5x coin radius (== 12px at coinR=24) makes the
 -- tool compact -- the player aims precisely with the rim dots, which scale
 -- with toolR so the whole assembly shrinks together.
-local TOOL_R_FACTOR = 0.5
+local TOOL_R_FACTOR = 1.5
 
 -- ---------- Rim dots & Simon Says arc bars ----------
 -- The 6 contact "dots" are still single points for collision (one per 60deg
