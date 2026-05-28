@@ -397,17 +397,22 @@ local function resolveFlip(self, coin, landingX, landingY)
   local d2 = dx * dx + dy * dy
   local tierMult = Tiers[(coin.tier or 0) + 1].mult
 
-  if d2 <= L.bullR * L.bullR then
+  local cr      = coin.radius
+  local bull_t  = L.bullR   + cr
+  local mid_t   = L.middleR + cr
+  local outer_t = L.outerR  + cr
+
+  if d2 < bull_t * bull_t then
     local gain = max(1, floor(POINTS.bull * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "bull", gain
-  elseif d2 <= L.middleR * L.middleR then
+  elseif d2 < mid_t * mid_t then
     local gain = max(1, floor(POINTS.middle * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "middle", gain
-  elseif d2 <= L.outerR * L.outerR then
+  elseif d2 < outer_t * outer_t then
     local gain = max(1, floor(POINTS.outer * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
