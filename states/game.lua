@@ -117,12 +117,22 @@ local COLOR_TEXT           = { 0.10, 0.10, 0.10 }
 local COLOR_TEXT_DIM       = { 0.40, 0.40, 0.40 }
 local COLOR_PANEL          = { 0x22/255, 0x22/255, 0x22/255 }  -- left panel bg
 local COLOR_BORDER         = { 0x33/255, 0x33/255, 0x33/255 }  -- board border frame
+-- Left panel scoreboard UI (pre-declared; no draw-time allocation).
+local COLOR_PANEL_LABEL    = { 0.55, 0.55, 0.55 }
+local COLOR_PANEL_VALUE    = { 1.00, 1.00, 1.00 }
+local COLOR_MULT_ACTIVE    = { 1.00, 0.85, 0.25 }  -- gold when chain active
+local COLOR_MULT_IDLE      = { 0.45, 0.45, 0.45 }  -- dim when x1
+local COLOR_BTN            = { 0.28, 0.28, 0.28 }
+local COLOR_BTN_BORDER     = { 0.48, 0.48, 0.48 }
+local COLOR_BTN_TEXT       = { 0.78, 0.78, 0.78 }
+local COLOR_DEBUG_ON       = { 0.25, 0.80, 0.35 }
 
 -- ---------- Tunables ----------
 
 local COINS_PER_FLOOR = 5
 local COIN_RADIUS_AT_390W = 24                  -- spec: 48px DIAMETER at 390w
 local FLOOR_THRESHOLDS = { [1] = 20, [2] = 60, [3] = 120 }
+local NUM_FLOORS        = 3
 
 -- Tight per Balatro lesson; the big numbers come from the multiplier chain.
 local POINTS = { bull = 5, middle = 3, outer = 1 }
@@ -691,27 +701,77 @@ function Game:draw()
   -- Left score panel.
   lg.setColor(COLOR_PANEL[1], COLOR_PANEL[2], COLOR_PANEL[3])
   lg.rectangle("fill", L.panelX, 0, L.panelW, L.panelH)
-  local px = L.panelX + 16
-  local py = 16
-  local lineH = 26
-  -- House name.
-  lg.setColor(COLOR_TEXT_DIM)
-  lg.print(self.houseName or "?", px, py)
-  py = py + lineH + 6
-  -- Marble icon (tier-0 coin colour) + count.
+
+  local px = L.panelX + 18       -- left margin
+  local pw = L.panelW - 36       -- usable width
+  local py = 18
+
+  -- House name
+  lg.setColor(COLOR_PANEL_VALUE[1], COLOR_PANEL_VALUE[2], COLOR_PANEL_VALUE[3])
+  lg.print(string.upper(self.houseName or "?"), px, py)
+  py = py + 22
+  lg.setColor(1, 1, 1, 0.12)
+  lg.setLineWidth(1)
+  lg.line(px, py, px + pw, py)
+  py = py + 12
+
+  -- Score
+  lg.setColor(COLOR_PANEL_LABEL[1], COLOR_PANEL_LABEL[2], COLOR_PANEL_LABEL[3])
+  lg.print("SCORE", px, py)
+  py = py + 18
   local tier0col = Tiers[1].color
+  local circR = 10
   lg.setColor(tier0col[1], tier0col[2], tier0col[3])
-  lg.circle("fill", px + 7, py + 7, 7)
-  lg.setColor(COLOR_TEXT)
-  lg.print(tostring(self.marbles), px + 20, py)
-  py = py + lineH
-  -- Multiplier.
-  lg.setColor(COLOR_TEXT)
-  lg.print("x" .. self.multiplier, px, py)
-  py = py + lineH
-  -- Floor / threshold.
-  lg.setColor(COLOR_TEXT_DIM)
-  lg.print("FLOOR " .. self.floor .. "  NEED " .. (FLOOR_THRESHOLDS[self.floor] or "?"), px, py)
+  lg.circle("fill", px + circR, py + circR, circR)
+  lg.setColor(0.12, 0.12, 0.12, 0.70)
+  lg.setLineWidth(1.5)
+  lg.circle("line", px + circR, py + circR, circR)
+  lg.setColor(COLOR_PANEL_VALUE[1], COLOR_PANEL_VALUE[2], COLOR_PANEL_VALUE[3])
+  lg.print(tostring(self.marbles), px + circR * 2 + 10, py + 3)
+  py = py + circR * 2 + 10
+  local mc = self.multiplier > 1 and COLOR_MULT_ACTIVE or COLOR_MULT_IDLE
+  lg.setColor(mc[1], mc[2], mc[3])
+  lg.print("x" .. self.multiplier .. "  MULT", px, py)
+  py = py + 22
+  lg.setColor(1, 1, 1, 0.12)
+  lg.setLineWidth(1)
+  lg.line(px, py, px + pw, py)
+  py = py + 12
+
+  -- Floor
+  lg.setColor(COLOR_PANEL_LABEL[1], COLOR_PANEL_LABEL[2], COLOR_PANEL_LABEL[3])
+  lg.print("FLOOR", px, py)
+  py = py + 18
+  lg.setColor(COLOR_PANEL_VALUE[1], COLOR_PANEL_VALUE[2], COLOR_PANEL_VALUE[3])
+  lg.print(tostring(self.floor) .. " / " .. NUM_FLOORS, px, py)
+  py = py + 22
+  lg.setColor(COLOR_PANEL_LABEL[1], COLOR_PANEL_LABEL[2], COLOR_PANEL_LABEL[3])
+  lg.print("NEED  " .. (FLOOR_THRESHOLDS[self.floor] or "?"), px, py)
+  py = py + 22
+  lg.setColor(1, 1, 1, 0.12)
+  lg.setLineWidth(1)
+  lg.line(px, py, px + pw, py)
+  py = py + 12
+
+  -- Restart button
+  lg.setColor(COLOR_BTN[1], COLOR_BTN[2], COLOR_BTN[3])
+  lg.rectangle("fill", px, py, pw, 26, 4, 4)
+  lg.setColor(COLOR_BTN_BORDER[1], COLOR_BTN_BORDER[2], COLOR_BTN_BORDER[3])
+  lg.setLineWidth(1)
+  lg.rectangle("line", px, py, pw, 26, 4, 4)
+  lg.setColor(COLOR_BTN_TEXT[1], COLOR_BTN_TEXT[2], COLOR_BTN_TEXT[3])
+  lg.print("[R]  Restart", px + 8, py + 5)
+  py = py + 34
+
+  -- Debug toggle button
+  local dbgCol = self.debugRegions and COLOR_DEBUG_ON or COLOR_BTN_TEXT
+  lg.setColor(COLOR_BTN[1], COLOR_BTN[2], COLOR_BTN[3])
+  lg.rectangle("fill", px, py, pw, 26, 4, 4)
+  lg.setColor(COLOR_BTN_BORDER[1], COLOR_BTN_BORDER[2], COLOR_BTN_BORDER[3])
+  lg.setLineWidth(1)
+  lg.rectangle("line", px, py, pw, 26, 4, 4)
+  lg.setColor(dbgCol[1], dbgCol[2], dbgCol[3])
+  lg.print("[G]  Debug", px + 8, py + 5)
 
   -- Thick dark border frame (drawn first; board surface sits inset inside it).
   lg.setColor(COLOR_BORDER[1], COLOR_BORDER[2], COLOR_BORDER[3])
