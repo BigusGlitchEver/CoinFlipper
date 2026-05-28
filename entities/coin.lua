@@ -65,6 +65,10 @@ function Coin:new(x, y, radius)
   -- Last launch direction in radians (screen-space). Stored so the chain
   -- reaction can compute the leading-edge contact point at landing.
   self.launchAngle = 0
+  -- Bounce point set by launch() when the coin clips a board wall; nil otherwise.
+  self.bounceX = nil
+  self.bounceY = nil
+  self._tSplit = nil
 end
 
 -- Tap-hit detection. True if (px, py) is inside the coin's radius AND the
@@ -146,16 +150,91 @@ end
 -- Returns (landingX, landingY) immediately at launch time. The animation only
 -- interpolates -- tumble/spin is cosmetic and CANNOT alter the landing.
 -- Same (angle, power) = same landing, deterministic.
-function Coin:launch(angle, power, arc, item, callback)
+-- bx,by,bw,bh: inner board bounds for one-bounce wall reflection (optional).
+-- When the tentative landing is outside the board the coin reflects off the
+-- first wall it crosses and continues with remaining power. bounceX/Y is
+-- nil when no bounce occurred; _tSplit records the phase-split fraction.
+function Coin:launch(angle, power, arc, item, callback, bx, by, bw, bh)
   local flight_time = (item and item.flight_time) or 0.45
+  local ca = cos(angle)
+  local sa = sin(angle)
+  local ox, oy = self.x, self.y
 
-  -- Compute landing immediately (deterministic).
-  local lx = self.x + cos(angle) * power
-  local ly = self.y + sin(angle) * power
+  -- Tentative landing (deterministic).
+  local lx = ox + ca * power
+  local ly = oy + sa * power
 
-  -- Stash for the animation; the visual cannot change the result.
-  self.startX         = self.x
-  self.startY         = self.y
+  -- Reset bounce state.
+  self.bounceX = nil
+  self.bounceY = nil
+  self._tSplit = nil
+
+  if bx and (lx < bx or lx > bx + bw or ly < by or ly > by + bh) then
+    -- Find smallest t in (0,1] where the ray first crosses a wall.
+    local tMin      = 2          -- sentinel > 1
+    local wallHoriz = false      -- true = top/bottom, false = left/right
+
+    if ca < 0 then          -- left wall x = bx
+      local t = (bx - ox) / (ca * power)
+      if t > 0 and t <= 1 then
+        local hy = oy + sa * power * t
+        if hy >= by and hy <= by + bh and t < tMin then
+          tMin = t; wallHoriz = false
+        end
+      end
+    elseif ca > 0 then      -- right wall x = bx + bw
+      local t = (bx + bw - ox) / (ca * power)
+      if t > 0 and t <= 1 then
+        local hy = oy + sa * power * t
+        if hy >= by and hy <= by + bh and t < tMin then
+          tMin = t; wallHoriz = false
+        end
+      end
+    end
+    if sa < 0 then          -- top wall y = by
+      local t = (by - oy) / (sa * power)
+      if t > 0 and t <= 1 then
+        local hx = ox + ca * power * t
+        if hx >= bx and hx <= bx + bw and t < tMin then
+          tMin = t; wallHoriz = true
+        end
+      end
+    elseif sa > 0 then      -- bottom wall y = by + bh
+      local t = (by + bh - oy) / (sa * power)
+      if t > 0 and t <= 1 then
+        local hx = ox + ca * power * t
+        if hx >= bx and hx <= bx + bw and t < tMin then
+          tMin = t; wallHoriz = true
+        end
+      end
+    end
+
+    if tMin <= 1 then
+      local wx = ox + ca * power * tMin
+      local wy = oy + sa * power * tMin
+      local rca = ca
+      local rsa = sa
+      if wallHoriz then rsa = -rsa else rca = -rca end
+      local rem = (1 - tMin) * power
+      lx = wx + rca * rem
+      ly = wy + rsa * rem
+      if lx < bx      then lx = bx      end
+      if lx > bx + bw then lx = bx + bw end
+      if ly < by      then ly = by       end
+      if ly > by + bh then ly = by + bh  end
+      self.bounceX = wx
+      self.bounceY = wy
+      local d1x = wx - ox;  local d1y = wy - oy
+      local d2x = lx - wx;  local d2y = ly - wy
+      local d1  = sqrt(d1x * d1x + d1y * d1y)
+      local d2  = sqrt(d2x * d2x + d2y * d2y)
+      self._tSplit = (d1 + d2 > 0) and (d1 / (d1 + d2)) or 0.5
+    end
+  end
+
+  -- Stash for the animation; the visual cannot alter the landing.
+  self.startX         = ox
+  self.startY         = oy
   self.targetX        = lx
   self.targetY        = ly
   self.flipTime       = 0
@@ -182,9 +261,27 @@ function Coin:update(dt)
     if cb then cb(self.x, self.y) end
     return
   end
-  self.x = self.startX + (self.targetX - self.startX) * t
-  self.y = self.startY + (self.targetY - self.startY) * t
-  self.z = sin(t * pi) * self.arcHeight
+  if self.bounceX then
+    -- Two-phase arc: start->bounce (phase 1) then bounce->target (phase 2).
+    local ts = self._tSplit
+    if t < ts then
+      local p = (ts > 0) and (t / ts) or 0
+      self.x = self.startX  + (self.bounceX - self.startX)  * p
+      self.y = self.startY  + (self.bounceY - self.startY)  * p
+      self.z = sin(p * pi)  * self.arcHeight * ts
+    else
+      -- Phase 2: z resets to 0 at the bounce point.
+      local rem = 1 - ts
+      local p   = (rem > 0) and ((t - ts) / rem) or 1
+      self.x = self.bounceX + (self.targetX - self.bounceX) * p
+      self.y = self.bounceY + (self.targetY - self.bounceY) * p
+      self.z = sin(p * pi)  * self.arcHeight * rem
+    end
+  else
+    self.x = self.startX + (self.targetX - self.startX) * t
+    self.y = self.startY + (self.targetY - self.startY) * t
+    self.z = sin(t * pi) * self.arcHeight
+  end
 end
 
 function Coin:draw()
