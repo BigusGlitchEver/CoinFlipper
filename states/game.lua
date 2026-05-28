@@ -211,12 +211,16 @@ end
 -- exclusion checks. Returns a table of Coin instances with itemType set.
 local function scatterBoard()
   local easyR    = floor(L.coinR * Tiers.EASY_COIN_RADIUS_SCALE)
+  local miniR    = floor(L.coinR * Tiers.MINI_COIN_RADIUS_SCALE)
   local midItem  = Items.byId("coin")
   local easyItem = Items.byId("easy_coin")
+  local miniItem = Items.byId("mini_coin")
+  local hardItem = Items.byId("hard_coin")
   local specs = {
     { radius = L.coinR, itemType = "coin",      item = midItem  },
     { radius = easyR,   itemType = "easy_coin", item = easyItem },
-    { radius = easyR,   itemType = "easy_coin", item = easyItem },
+    { radius = miniR,   itemType = "mini_coin", item = miniItem },
+    { radius = L.coinR, itemType = "hard_coin", item = hardItem },
   }
   local coins       = {}
   local maxAttempts = 60
