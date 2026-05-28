@@ -91,6 +91,12 @@ function M.run()
   print("\n[3/4] Game: coin scatter + 4-tier scoring + tap-on-coin input:")
   local L = Game._L
 
+  -- 3-layout) Post-restructure layout assertions.
+  check(c, "3-layout-a boardX > PANEL_W (board right of panel)",
+    L.boardX > 220)
+  check(c, "3-layout-b boardH > boardW (taller than wide)",
+    L.boardH > L.boardW)
+
   -- Scatter: should produce a non-zero number of coins, up to the requested 5.
   -- (rejection sampling may give fewer in tight layouts, but at least 1).
   check(c, "4a at least 1 coin scattered",  #Game.coins >= 1)
@@ -101,6 +107,38 @@ function M.run()
     if Game.coins[i].used or Game.coins[i].flipping then allFresh = false; break end
   end
   check(c, "4c all coins start unused and not flipping", allFresh)
+
+  -- 4d) No scattered coin may overlap the target exclusion zone.
+  local tThresh4d = L.outerR + L.coinR + 8
+  local allClear = true
+  for i = 1, #Game.coins do
+    local c4 = Game.coins[i]
+    local dx4 = c4.x - L.targetCX
+    local dy4 = c4.y - L.targetCY
+    if (dx4 * dx4 + dy4 * dy4) < (tThresh4d * tThresh4d) then
+      allClear = false; break
+    end
+  end
+  check(c, "4d no scattered coin overlaps target exclusion zone", allClear)
+
+  -- 4e-4g) Bounce: coin launched from 5px off the left wall, aimed left (pi),
+  --        power 200. Should reflect off left wall and land inside the board.
+  local CoinCls4 = require("entities.coin")
+  local Items4   = require("data.flip_items")
+  local coinItem4 = Items4.byId("coin")
+  local bCoin = CoinCls4(L.boardX + 5, L.boardY + L.boardH / 2, 14)
+  bCoin:launch(math.pi, 200, 60, coinItem4, nil,
+    L.boardX, L.boardY, L.boardW, L.boardH)
+  check(c, "4e bounce: targetX inside board",
+    bCoin.targetX >= L.boardX and bCoin.targetX <= L.boardX + L.boardW,
+    string.format("targetX=%.1f boardX=%.1f boardR=%.1f",
+      bCoin.targetX, L.boardX, L.boardX + L.boardW))
+  check(c, "4f bounce: targetY inside board",
+    bCoin.targetY >= L.boardY and bCoin.targetY <= L.boardY + L.boardH,
+    string.format("targetY=%.1f boardY=%.1f boardB=%.1f",
+      bCoin.targetY, L.boardY, L.boardY + L.boardH))
+  check(c, "4g bounce: bounceX is non-nil (wall was hit)",
+    bCoin.bounceX ~= nil)
 
   -- 5: 4-tier ring resolution against synthetic landings.
   --    We poke marbles/multiplier directly via the exposed _resolveFlip.
