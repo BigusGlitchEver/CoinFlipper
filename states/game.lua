@@ -32,6 +32,12 @@ local pi    = math.pi
 local huge  = math.huge
 local floor = math.floor
 
+-- Hand-drawn tool sprites. Black background PNG drawn with blend mode "add":
+-- black (0,0,0) contributes nothing to the destination, grey tints slightly,
+-- white marks pop at full brightness. Loaded once at module level.
+local spriteCircle   = love.graphics.newImage("assets/Circle.png")
+local spriteTriangle = love.graphics.newImage("assets/Triangle.png")
+
 -- Tiny helper: linear interpolation in [0, 1].
 local function lerp(a, b, t) return a + (b - a) * t end
 
@@ -79,6 +85,10 @@ do
     DOT_UY[i]         = sin(rad)
     DOT_ANGLES_RAD[i] = rad
   end
+  -- Entries 7 and 8: right (0 deg) and left (180 deg), completing the
+  -- 8-mark ring that matches the painted marks on Circle.png.
+  DOT_UX[7] = cos(0);   DOT_UY[7] = sin(0)    -- right
+  DOT_UX[8] = cos(pi);  DOT_UY[8] = sin(pi)   -- left
 end
 local SLIVER_HALF_WIDTH = 9 * pi / 180   -- half-width of interior sliver tab
 local SLIVER_LINE_WIDTH = 5              -- sliver arc line width
@@ -287,39 +297,69 @@ end
 
 -- ---------- Flip tool (round, follows the cursor) ----------
 
--- Triangle tool: equilateral triangle (tip pointing up). The three vertices
--- ARE the contact points; no external dots. Tips highlight when armed.
--- Triangle tool: translucent body + clean edge outline. The edges ARE the contact surface.
-local function drawTriangleToolAt(x, y)
-  local r   = L.toolR
-  local v1x = x + TRI_UX[1] * r;  local v1y = y + TRI_UY[1] * r
-  local v2x = x + TRI_UX[2] * r;  local v2y = y + TRI_UY[2] * r
-  local v3x = x + TRI_UX[3] * r;  local v3y = y + TRI_UY[3] * r
-  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.22)
-  lg.polygon("fill", v1x, v1y, v2x, v2y, v3x, v3y)
-  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.75)
-  lg.setLineWidth(2)
-  lg.polygon("line", v1x, v1y, v2x, v2y, v3x, v3y)
+-- Triangle tool: hand-drawn sprite (Triangle.png) scaled to L.toolR*2 diameter.
+-- Blend mode "add" makes the black background invisible; grey body tints the
+-- board slightly; white marks at the 3 tip positions pop at full brightness.
+-- selected=true draws a cyan highlight ring just outside the tool.
+local function drawTriangleToolAt(x, y, selected)
+  local r     = L.toolR
+  local diam  = r * 2
+  local sw    = spriteTriangle:getWidth()
+  local sh    = spriteTriangle:getHeight()
+  local scale = diam / max(sw, sh)
+  local ox    = sw * 0.5
+  local oy    = sh * 0.5
+  -- Additive blend: black bg vanishes, grey/white marks composite naturally.
+  lg.setBlendMode("add")
+  lg.setColor(1, 1, 1, 1)
+  lg.draw(spriteTriangle, x, y, 0, scale, scale, ox, oy)
+  lg.setBlendMode("alpha")
+  -- Cyan highlight ring when this tool is active.
+  if selected then
+    lg.setColor(COLOR_HIGHLIGHT[1], COLOR_HIGHLIGHT[2], COLOR_HIGHLIGHT[3], 0.85)
+    lg.setLineWidth(3)
+    lg.circle("line", x, y, r + 6)
+    lg.setColor(1, 1, 1, 1)
+  end
+  -- White contact marks at the 3 tip positions (match Triangle.png painted marks).
+  lg.setColor(1, 1, 1, 1)
+  for i = 1, 3 do
+    lg.circle("fill", x + TRI_UX[i] * r, y + TRI_UY[i] * r, 5)
+  end
   lg.setColor(1, 1, 1, 1)
 end
 
--- Draws the tool as a Simon-Says wheel: translucent grey hub + 6 colored
--- arc panels around the rim with darker center marks at the exact dot
--- contact angles. Three per-bar visual states:
---   ARMED      : base color + bright dark-center mark + white halo arc
---                just outside the bar.
---   AVAILABLE  : (in conflict list but not selected) thicker pulsing fill.
---   INACTIVE   : base color, normal thickness, no halo.
--- conflictDots entries are {idx, coin} pairs; we just need the idx for "is
--- this bar in the conflict list?" so we don't allocate when reading.
--- Circle tool: translucent disc + clean rim ring. The rim IS the contact surface.
-local function drawToolAt(x, y)
+-- Circle tool: hand-drawn sprite (Circle.png) scaled to L.toolR*2 diameter.
+-- Blend mode "add" makes the black background invisible; grey body tints the
+-- board slightly; 8 white marks at rim positions pop at full brightness.
+-- selected=true draws a cyan highlight ring just outside the tool.
+local function drawToolAt(x, y, selected)
   local toolR = L.toolR
-  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.30)
-  lg.circle("fill", x, y, toolR)
-  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.75)
-  lg.setLineWidth(2)
-  lg.circle("line", x, y, toolR)
+  local diam  = toolR * 2
+  local sw    = spriteCircle:getWidth()
+  local sh    = spriteCircle:getHeight()
+  local scale = diam / max(sw, sh)
+  local ox    = sw * 0.5
+  local oy    = sh * 0.5
+  -- Additive blend: black bg vanishes, grey/white marks composite naturally.
+  lg.setBlendMode("add")
+  lg.setColor(1, 1, 1, 1)
+  lg.draw(spriteCircle, x, y, 0, scale, scale, ox, oy)
+  lg.setBlendMode("alpha")
+  -- Cyan highlight ring when this tool is active.
+  if selected then
+    lg.setColor(COLOR_HIGHLIGHT[1], COLOR_HIGHLIGHT[2], COLOR_HIGHLIGHT[3], 0.85)
+    lg.setLineWidth(3)
+    lg.circle("line", x, y, toolR + 6)
+    lg.setColor(1, 1, 1, 1)
+  end
+  -- White contact marks at the 8 rim positions (match Circle.png painted marks).
+  -- DOT_UX/DOT_UY indices 1-6 are the 6 original 60-deg positions;
+  -- 7 = right (0 deg), 8 = left (180 deg) complete the 8-mark ring.
+  lg.setColor(1, 1, 1, 1)
+  for i = 1, 8 do
+    lg.circle("fill", x + DOT_UX[i] * toolR, y + DOT_UY[i] * toolR, 4)
+  end
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -914,9 +954,9 @@ function Game:draw()
   -- rim with dark center marks at the exact contact angles. The armed bar
   -- gets a white halo; conflict-available bars pulse thicker.
   if self.toolType == TOOL_TRIANGLE then
-    drawTriangleToolAt(self.toolX, self.toolY)
+    drawTriangleToolAt(self.toolX, self.toolY, self.toolType == TOOL_TRIANGLE)
   else
-    drawToolAt(self.toolX, self.toolY)
+    drawToolAt(self.toolX, self.toolY, self.toolType == TOOL_CIRCLE)
   end
   -- Armed contact flash: bright dot exactly where the edge meets the coin.
   if self.armedDotX then
