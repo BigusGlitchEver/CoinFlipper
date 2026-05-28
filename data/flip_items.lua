@@ -56,7 +56,23 @@ local DEFAULT_REGIONS = {
   -- Bottom row (y in [1/3, 1]) -> fly UP-ish
   { x = -1,     y =  THIRD, w = W3, h = H3, angle = -pi/4    },  -- BL -> up-right
   { x = -THIRD, y =  THIRD, w = W3, h = H3, angle = -pi/2    },  -- BC -> up
-  { x =  THIRD, y =  THIRD, w = W3, h = H3, angle = -3*pi/4  },  -- BR -> up-left
+  { x =  THIRD, y =  THIRD, w = W3, h = H3, angle = -3*pi/4  },  -- BR
+}
+
+-- Easy coin regions: centre cell is EC half-width (±0.40 of board half-size),
+-- giving a large flat dead zone. Corner/edge cells shrink to fill the rest.
+local EC = 0.40        -- centre cell half-width in normalised ±1 space
+local EW = 1 - EC      -- outer cell width = 0.60
+local EASY_REGIONS = {
+  { x = -1,  y = -1,  w = EW,     h = EW,     angle =  pi/4    },  -- TL
+  { x = -EC, y = -1,  w = 2 * EC, h = EW,     angle =  pi/2    },  -- TC
+  { x =  EC, y = -1,  w = EW,     h = EW,     angle =  3*pi/4  },  -- TR
+  { x = -1,  y = -EC, w = EW,     h = 2 * EC, angle =  0       },  -- ML
+  { x = -EC, y = -EC, w = 2 * EC, h = 2 * EC, angle = -pi/2    },  -- C (large: ±0.40)
+  { x =  EC, y = -EC, w = EW,     h = 2 * EC, angle =  pi      },  -- MR
+  { x = -1,  y =  EC, w = EW,     h = EW,     angle = -pi/4    },  -- BL
+  { x = -EC, y =  EC, w = 2 * EC, h = EW,     angle = -pi/2    },  -- BC
+  { x =  EC, y =  EC, w = EW,     h = EW,     angle = -3*pi/4  },  -- BR
 }
 
 Data.items = {
@@ -72,7 +88,23 @@ Data.items = {
     outer_arc_center   = 70,    outer_arc_edge   = 25,
     flight_time        = 0.45,
     regions            = DEFAULT_REGIONS,
-    notes              = 'Fast pop, short hang, very learnable. The honest starter.',
+    flight_time=0.45, regions=DEFAULT_REGIONS,
+  },
+  {
+    id                 = 'easy_coin',
+    name               = 'Easy Coin',
+    tier               = 'easy',
+    color              = { 0.45, 0.78, 0.32 },
+    zone_threshold     = 0.40,
+    -- Flat dead zone: 0-40% maps to the same centre shot every time.
+    inner_power_center = 80,    inner_power_edge = 80,
+    inner_arc_center   = 220,   inner_arc_edge   = 220,
+    -- Continuous ramp outward from 40%: starts exactly at centre shot.
+    outer_power_center = 80,    outer_power_edge = 340,
+    outer_arc_center   = 220,   outer_arc_edge   = 25,
+    flight_time        = 0.45,
+    regions            = EASY_REGIONS,
+    notes              = 'Large dead zone; forgiving. Edge identical to Coin edge.',
   },
   {
     id                 = 'lucky_coin',
