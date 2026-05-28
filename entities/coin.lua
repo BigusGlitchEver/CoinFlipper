@@ -373,6 +373,22 @@ function Coin:draw()
       end
       lg.setColor(1, 1, 1, 0.55)
       lg.polygon("fill", STAR_VERTS)
+    elseif self.itemType == 'mini_coin' then
+      -- White diamond for mini_coin (4-point rotated square).
+      local dr = self.radius * 0.42
+      lg.setColor(1, 1, 1, 0.60)
+      lg.polygon("fill", cx, cy - dr, cx + dr, cy, cx, cy + dr, cx - dr, cy)
+      lg.setColor(0.30, 0.88, 0.60, 0.70)
+      lg.setLineWidth(1.5)
+      lg.polygon("line", cx, cy - dr, cx + dr, cy, cx, cy + dr, cx - dr, cy)
+    elseif self.itemType == 'hard_coin' then
+      -- Solid black dot for hard_coin.
+      lg.setColor(0, 0, 0, 0.82)
+      lg.circle("fill", cx, cy, self.radius * 0.32)
+      -- Thin white ring so it reads on dark tier fills.
+      lg.setColor(1, 1, 1, 0.40)
+      lg.setLineWidth(1.5)
+      lg.circle("line", cx, cy, self.radius * 0.32)
     else
       -- Simplified skull for mid coin.
       local cr   = self.radius * 0.40
