@@ -46,6 +46,26 @@ local COLOR_COIN_OUTLINE = { 0x33/255, 0x33/255, 0x33/255 }
 local STAR_VERTS = {}
 for _i = 1, 20 do STAR_VERTS[_i] = 0 end
 
+-- Lazy sprite loader. Food-coin art (egg / skull / toast) lives in
+-- assets/coins. Loaded on first draw -- love.graphics is guaranteed ready by
+-- then; module-load time is NOT safe for newImage. Missing files fall back to
+-- the primitive (filled disc) rendering.
+local SPRITES = nil
+local function ensureSprites()
+  if SPRITES then return end
+  SPRITES = {}
+  local files = {
+    egg   = "assets/coins/egg.png",
+    skull = "assets/coins/skull.png",
+    toast = "assets/coins/toast.png",
+  }
+  for key, path in pairs(files) do
+    if love.filesystem.getInfo(path) then
+      SPRITES[key] = lg.newImage(path)
+    end
+  end
+end
+
 function Coin:new(x, y, radius)
   self.x        = x
   self.y        = y
@@ -315,6 +335,9 @@ function Coin:draw()
   local alpha = self.used and 0.30 or 1.0
   local fill  = Tiers[(self.tier or 0) + 1].color
 
+  ensureSprites()
+  local sprite = SPRITES and SPRITES[self.itemType]
+
   -- Motion trail: 4 after-images of the WHOLE coin behind it during flight.
   -- Alpha ramps from 0.25 (g=1, closest) down to ~0.05 (g=4, farthest).
   if self.flipping then
@@ -348,23 +371,43 @@ function Coin:draw()
         local gtumble = abs(sin(tg * self.flightDuration * TUMBLE_RATE))
         local gsx     = gtumble * 0.5 + 0.5
         local ga      = 0.25 - (g - 1) * (0.20 / 3)
-        lg.setColor(fill[1], fill[2], fill[3], ga)
-        lg.ellipse("fill", gx, gy - gz, self.radius * gsx, self.radius)
-        lg.setColor(COLOR_COIN_OUTLINE[1], COLOR_COIN_OUTLINE[2], COLOR_COIN_OUTLINE[3], ga)
-        lg.setLineWidth(2)
-        lg.ellipse("line", gx, gy - gz, self.radius * gsx, self.radius)
+        if sprite then
+          local iw, ih = sprite:getDimensions()
+          local fit = (self.radius * 2) / ((iw > ih) and iw or ih)
+          lg.setColor(1, 1, 1, ga)
+          lg.draw(sprite, gx, gy - gz, 0, fit * gsx, fit, iw * 0.5, ih * 0.5)
+        else
+          lg.setColor(fill[1], fill[2], fill[3], ga)
+          lg.ellipse("fill", gx, gy - gz, self.radius * gsx, self.radius)
+          lg.setColor(COLOR_COIN_OUTLINE[1], COLOR_COIN_OUTLINE[2], COLOR_COIN_OUTLINE[3], ga)
+          lg.setLineWidth(2)
+          lg.ellipse("line", gx, gy - gz, self.radius * gsx, self.radius)
+        end
       end
     end
   end
 
-  lg.setColor(fill[1], fill[2], fill[3], alpha)
-  lg.ellipse("fill", self.x, self.y - self.z, self.radius * sx, self.radius)
-  lg.setColor(COLOR_COIN_OUTLINE[1], COLOR_COIN_OUTLINE[2], COLOR_COIN_OUTLINE[3], alpha)
-  lg.setLineWidth(2)
-  lg.ellipse("line", self.x, self.y - self.z, self.radius * sx, self.radius)
+  if sprite then
+    -- Sprite IS the coin face. Scale so its larger side fills the coin's
+    -- diameter; tumble squash applies to x like the primitive body does.
+    local iw, ih = sprite:getDimensions()
+    local fit = (self.radius * 2) / ((iw > ih) and iw or ih)
+    lg.setColor(1, 1, 1, alpha)
+    lg.draw(sprite, self.x, self.y - self.z, 0, fit * sx, fit, iw * 0.5, ih * 0.5)
+    -- Tier ring carries the degradation cue (yellow -> blue -> purple -> red).
+    lg.setColor(fill[1], fill[2], fill[3], alpha)
+    lg.setLineWidth(3)
+    lg.ellipse("line", self.x, self.y - self.z, self.radius * sx, self.radius)
+  else
+    lg.setColor(fill[1], fill[2], fill[3], alpha)
+    lg.ellipse("fill", self.x, self.y - self.z, self.radius * sx, self.radius)
+    lg.setColor(COLOR_COIN_OUTLINE[1], COLOR_COIN_OUTLINE[2], COLOR_COIN_OUTLINE[3], alpha)
+    lg.setLineWidth(2)
+    lg.ellipse("line", self.x, self.y - self.z, self.radius * sx, self.radius)
+  end
 
-  -- Coin icon: shown only when not retired (used=false).
-  if not self.used then
+  -- Coin icon: shown only when not retired (used=false) AND no sprite art.
+  if not self.used and not sprite then
     local cx = self.x
     local cy = self.y - self.z
     if self.itemType == 'easy_coin' then
