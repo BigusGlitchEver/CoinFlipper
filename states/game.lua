@@ -497,27 +497,12 @@ local function drawHoverDebug(coin, item, dotX, dotY)
   local angle = region.angle
   local power = resolveShot(item, offDist)
   if region.power then power = region.power end
-  -- Landing position: flat on the board, no upward curve.
   local endX = coin.x + cos(angle) * power
   local endY = coin.y + sin(angle) * power
-  local dx   = endX - coin.x
-  local dy   = endY - coin.y
-  local dist = math.sqrt(dx * dx + dy * dy)
-  -- Dotted straight line from coin center to landing spot.
-  -- Dots every ~22px; final dot larger to mark the landing.
-  local DOT_R    = 6
-  local DOT_GAP  = 22
-  local DOT_COL  = { 1, 0.08, 0.58 }  -- hot pink, fully opaque
-  lg.setColor(DOT_COL[1], DOT_COL[2], DOT_COL[3], 1)
-  if dist > 0 then
-    local steps = math.max(1, math.floor(dist / DOT_GAP))
-    for i = 1, steps - 1 do
-      local t = i / steps
-      lg.circle("fill", coin.x + dx * t, coin.y + dy * t, DOT_R)
-    end
-  end
-  -- Landing dot — slightly larger.
-  lg.circle("fill", endX, endY, DOT_R + 3)
+  lg.setColor(1, 0.45, 0, 1)
+  lg.setLineWidth(2)
+  lg.line(coin.x, coin.y, endX, endY)
+  lg.circle("line", endX, endY, 12)
   lg.setColor(1, 1, 1, 1)
 end
 
