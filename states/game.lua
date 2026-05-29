@@ -1,16 +1,14 @@
 -- states/game.lua
 -- The flip board, rebuilt per docs/FLIP_BOARD_VISUAL_SPEC.md.
 --
--- Portrait layout, light grey background, white board rectangle filling
--- everything below a top HUD strip. One target (3 concentric rings) in the
--- upper half of the board. Multiple coins scattered on the board at floor
--- start; tap an un-used coin to flip it (closed-form arc per the physics
--- spec). Only one coin flies at a time. A hand sprite renders behind the
--- most-recently-tapped coin, from the nearest screen edge.
+-- Portrait layout, light grey background, board rectangle filling
+-- everything below a top HUD strip. The ENTIRE board is the scoring space:
+-- four corner reward zones (3 pts each) sit on a center region (1 pt).
+-- Multiple coins scattered on the board at floor start; tap one to flip it.
+-- Only one coin flies at a time.
 --
--- Scoring is 4-tier: bullseye / middle ring / outer ring (graze) / off-board
--- (full miss + chain reset). On-board-but-outside-target is a no-op (no
--- score, no chain change) -- effectively a "wasted shot."
+-- Scoring: landing in a corner = 3 pts; landing anywhere else on-board = 1 pt;
+-- landing off-board = miss + chain reset. Every on-board landing scores.
 --
 -- NO JUICE in this chunk: no score popups, no ring flash, no screen shake,
 -- no multiplier bounce, no between-floor shrink. Those land in Chunk 4.
@@ -132,10 +130,9 @@ local Game = {}
 local COLOR_BG             = { 0xEE/255, 0xEE/255, 0xEE/255 }
 local COLOR_BOARD          = { 1, 1, 1 }
 local COLOR_BOARD_BORDER   = { 0xAA/255, 0xAA/255, 0xAA/255 }
-local COLOR_BULL           = { 0xE8/255, 0x47/255, 0x3F/255 }
-local COLOR_MIDDLE         = { 0xF5/255, 0xA6/255, 0x23/255 }
-local COLOR_OUTER          = { 0x5D/255, 0xB3/255, 0x5D/255 }
-local COLOR_TARGET_OUTLINE = { 0x33/255, 0x33/255, 0x33/255 }
+local COLOR_ZONE_CENTER    = { 0.93, 0.97, 0.89 }  -- light sage: center region (1 pt)
+local COLOR_ZONE_CORNER    = { 1.00, 0.83, 0.35 }  -- warm amber: corner zones (3 pts)
+local COLOR_ZONE_BORDER    = { 0.68, 0.62, 0.48 }  -- muted tan: corner outlines
 local COLOR_TOOL           = { 0x9A/255, 0xA0/255, 0xA6/255 }
 local COLOR_TOOL_OUTLINE   = { 0x33/255, 0x33/255, 0x33/255 }
 local COLOR_HIGHLIGHT      = { 0.20, 0.95, 1.00 }   -- cyan "armed" ring
@@ -164,13 +161,11 @@ local FLOOR_THRESHOLDS = { [1] = 20, [2] = 60, [3] = 120 }
 local NUM_FLOORS        = 3
 
 -- Tight per Balatro lesson; the big numbers come from the multiplier chain.
-local POINTS = { bull = 5, middle = 3, outer = 1 }
+local POINTS = { corner = 3, center = 1 }  -- corner zones beat center
 
 local PANEL_W   = 220   -- left score panel width
 local BORDER_T  = 10    -- board border thickness (pixels each side)
 local MARGIN    = 12    -- gap between screen edge/panel and border outer edge
--- outerR <= 18% of board shortest dim; 65px sits in spec 60-70 range.
-local TARGET_OUTER_R = 65
 
 -- ---------- Layout (rebuilt on enter / resize) ----------
 
@@ -196,17 +191,15 @@ local function rebuildLayout()
   L.boardW = L.borderW - BORDER_T * 2
   L.boardH = L.borderH - BORDER_T * 2
 
-  L.outerR  = TARGET_OUTER_R
-  L.middleR = L.outerR * 0.66
-  L.bullR   = L.outerR * 0.33
+  -- Corner zone size: ~20% of the shorter board dimension on each side.
+  -- Area of all 4 corners together ≈ 11-13% of total board area.
+  L.cornerSize = floor(math.min(L.boardW, L.boardH) * 0.20)
 
   -- Coin size: use the spec value (48px diameter) directly. Coins are
-  -- intentionally larger than the target -- tappable, not aim-able.
+  -- intentionally larger than the zone marks -- tappable, not aim-able.
   L.coinR = COIN_RADIUS_AT_390W
   -- Tool size derived from coin radius. Read by drawing AND hit-testing.
   L.toolR = L.coinR * TOOL_R_FACTOR
-  -- NOTE: targetCX/CY are NOT set here; they are randomised in Game:enter
-  -- each floor so they differ between runs.
 end
 
 -- ---------- Coin scatter ----------
@@ -227,13 +220,6 @@ local function scatterCoins(n, item)
         local dy = y - c.y
         if (dx * dx + dy * dy) < (minSpacing * minSpacing) then ok = false; break end
       end
-      -- Also reject positions that overlap the target ring.
-      if ok then
-        local tdx = x - L.targetCX
-        local tdy = y - L.targetCY
-        local tThresh = L.outerR + L.coinR + 8
-        if (tdx * tdx + tdy * tdy) < (tThresh * tThresh) then ok = false end
-      end
       if ok then
         local coin = Coin(x, y, L.coinR)
         coins[#coins + 1] = coin
@@ -246,8 +232,8 @@ local function scatterCoins(n, item)
   return coins
 end
 
--- scatterBoard: places 1 Mid coin + 2 Easy coins with spacing and target
--- exclusion checks. Returns a table of Coin instances with itemType set.
+-- scatterBoard: places 5 coins (mid/easy/easy/mini/hard) with spacing
+-- checks. Returns a table of Coin instances with itemType set.
 local function scatterBoard()
   local easyR    = floor(L.coinR * Tiers.EASY_COIN_RADIUS_SCALE)
   local miniR    = floor(L.coinR * Tiers.MINI_COIN_RADIUS_SCALE)
@@ -275,11 +261,6 @@ local function scatterBoard()
         local dx, dy = x - c.x, y - c.y
         local sep = cr + c.radius + 12
         if (dx * dx + dy * dy) < (sep * sep) then ok = false; break end
-      end
-      if ok then
-        local tdx, tdy = x - L.targetCX, y - L.targetCY
-        local tThresh = L.outerR + cr + 8
-        if (tdx * tdx + tdy * tdy) < (tThresh * tThresh) then ok = false end
       end
       if ok then
         local c = Coin(x, y, cr)
@@ -516,52 +497,44 @@ end
 
 -- ---------- Flip resolution ----------
 
--- 4-tier landing resolution. Pure logic; exposed as Game._resolveFlip for tests.
--- The coin parameter is used for tier-based degradation:
---   * Scoring hits apply Tiers[tier+1].mult to the zone points (min 1).
---   * Missed flips bump coin.tier by 1, capped at 3. Tier never resets.
+-- Landing resolution for Grandma's House board: the ENTIRE board scores.
+-- Corners (4 rectangular zones) award POINTS.corner; everywhere else on-
+-- board awards POINTS.center. Only an off-board landing resets the chain.
+-- Tier multiplier is applied to every scoring hit (not just misses).
 local function resolveFlip(self, coin, landingX, landingY)
-  local dx = landingX - L.targetCX
-  local dy = landingY - L.targetCY
-  local d2 = dx * dx + dy * dy
+  local bx, by  = L.boardX, L.boardY
+  local bw, bh  = L.boardW, L.boardH
+  local cz      = L.cornerSize
   local tierMult = Tiers[(coin.tier or 0) + 1].mult
 
-  local cr      = coin.radius
-  local bull_t  = L.bullR   + cr
-  local mid_t   = L.middleR + cr
-  local outer_t = L.outerR  + cr
-
-  if d2 < bull_t * bull_t then
-    local gain = max(1, floor(POINTS.bull * tierMult * self.multiplier))
-    self.marbles    = self.marbles + gain
-    self.multiplier = self.multiplier + 1
-    return "bull", gain
-  elseif d2 < mid_t * mid_t then
-    local gain = max(1, floor(POINTS.middle * tierMult * self.multiplier))
-    self.marbles    = self.marbles + gain
-    self.multiplier = self.multiplier + 1
-    return "middle", gain
-  elseif d2 < outer_t * outer_t then
-    local gain = max(1, floor(POINTS.outer * tierMult * self.multiplier))
-    self.marbles    = self.marbles + gain
-    self.multiplier = self.multiplier + 1
-    return "outer", gain
-  end
-
-  -- Outside the target. Is it still on the board?
+  -- Off-board first: full miss, chain resets, coin degrades.
   local onBoard =
-    landingX >= L.boardX and landingX <= L.boardX + L.boardW and
-    landingY >= L.boardY and landingY <= L.boardY + L.boardH
-
-  if onBoard then
-    -- Wasted shot: no points, no chain change. Survivable but degrades.
-    if coin.tier < 3 then coin.tier = coin.tier + 1 end
-    return "on_board_miss", 0
-  else
-    -- Full miss: chain resets, no points, also degrades.
+    landingX >= bx and landingX <= bx + bw and
+    landingY >= by and landingY <= by + bh
+  if not onBoard then
     if coin.tier < 3 then coin.tier = coin.tier + 1 end
     self.multiplier = 1
     return "off_board_miss", 0
+  end
+
+  -- Corner zone test (point-in-rect for each of the 4 corners).
+  local inCorner =
+    (landingX <= bx + cz      and landingY <= by + cz     ) or  -- top-left
+    (landingX >= bx + bw - cz and landingY <= by + cz     ) or  -- top-right
+    (landingX <= bx + cz      and landingY >= by + bh - cz) or  -- bottom-left
+    (landingX >= bx + bw - cz and landingY >= by + bh - cz)     -- bottom-right
+
+  if inCorner then
+    local gain = max(1, floor(POINTS.corner * tierMult * self.multiplier))
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "corner", gain
+  else
+    -- Center region: everything else on-board (1 pt, still feeds the chain).
+    local gain = max(1, floor(POINTS.center * tierMult * self.multiplier))
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "center", gain
   end
 end
 
@@ -590,8 +563,8 @@ fireFlip = function(self, coin, contactX, contactY, depth)
   if depth == 0 then self.activeCoin = coin end
   coin:launch(angle, power, arc, item, function(lx, ly)
     local zone, _ = resolveFlip(self, coin, lx, ly)
-    if zone == "bull" or zone == "middle" or zone == "outer" then
-      coin.used = true  -- scoring hits retire the coin at its current tier
+    if zone == "corner" or zone == "center" then
+      coin.used = true  -- every on-board landing retires the coin
     end
     -- Tier mutation on misses is handled inside resolveFlip.
     -- Chain reaction: bumps the depth. At depth 3 we still LAND and resolve
@@ -658,13 +631,6 @@ function Game:enter(prev, houseName)
   self.multiplier = 1
 
   rebuildLayout()
-
-  -- Randomise target position within the board each floor.
-  local tMargin = L.outerR + L.coinR + 24
-  L.targetCX = love.math.random(
-    L.boardX + tMargin, L.boardX + L.boardW - tMargin)
-  L.targetCY = love.math.random(
-    L.boardY + tMargin, L.boardY + L.boardH - tMargin)
 
   -- Prototype: every coin in the scatter is the same item (Coin). Future:
   -- per-floor item assignment, varied per scatter spot.
@@ -899,17 +865,22 @@ function Game:draw()
   lg.setColor(COLOR_BOARD)
   lg.rectangle("fill", L.boardX, L.boardY, L.boardW, L.boardH)
 
-  -- Target rings (outer first so inner sit on top -- flat fills, no
-  -- per-ring outline -- a single outer outline goes on last).
-  lg.setColor(COLOR_OUTER)
-  lg.circle("fill", L.targetCX, L.targetCY, L.outerR)
-  lg.setColor(COLOR_MIDDLE)
-  lg.circle("fill", L.targetCX, L.targetCY, L.middleR)
-  lg.setColor(COLOR_BULL)
-  lg.circle("fill", L.targetCX, L.targetCY, L.bullR)
-  lg.setColor(COLOR_TARGET_OUTLINE)
+  -- Board scoring zones: center region (1 pt) fills the board first;
+  -- 4 corner reward zones (3 pts each) sit on top. No circular target.
+  lg.setColor(COLOR_ZONE_CENTER)
+  lg.rectangle("fill", L.boardX, L.boardY, L.boardW, L.boardH)
+  local cz = L.cornerSize
+  lg.setColor(COLOR_ZONE_CORNER)
+  lg.rectangle("fill", L.boardX,                 L.boardY,                 cz, cz)  -- TL
+  lg.rectangle("fill", L.boardX + L.boardW - cz, L.boardY,                 cz, cz)  -- TR
+  lg.rectangle("fill", L.boardX,                 L.boardY + L.boardH - cz, cz, cz)  -- BL
+  lg.rectangle("fill", L.boardX + L.boardW - cz, L.boardY + L.boardH - cz, cz, cz)  -- BR
+  lg.setColor(COLOR_ZONE_BORDER)
   lg.setLineWidth(2)
-  lg.circle("line", L.targetCX, L.targetCY, L.outerR)
+  lg.rectangle("line", L.boardX,                 L.boardY,                 cz, cz)
+  lg.rectangle("line", L.boardX + L.boardW - cz, L.boardY,                 cz, cz)
+  lg.rectangle("line", L.boardX,                 L.boardY + L.boardH - cz, cz, cz)
+  lg.rectangle("line", L.boardX + L.boardW - cz, L.boardY + L.boardH - cz, cz, cz)
 
   -- Coins.
   for i = 1, #self.coins do self.coins[i]:draw() end
