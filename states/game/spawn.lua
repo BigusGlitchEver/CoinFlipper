@@ -162,7 +162,8 @@ function M.spawnCoinsAt(self, x, y, count, tier)
     nx = max(bx + cr, nx);  nx = max(bx + cr, min(bx + bw - cr, nx))
     ny = max(by + cr, ny);  ny = max(by + cr, min(by + bh - cr, ny))
     local c = Coin(nx, ny, cr)
-    c.tier = tier or 0
+    c.tier      = tier or 0
+    c.isSpawned = true   -- spawned coins never produce further multiplication
     self.coins[#self.coins + 1] = c
   end
 end

@@ -209,10 +209,11 @@ fireFlip = function(self, coin, contactX, contactY, depth)
       end
     end
 
-    -- Spawn extra coins at the landing point for chain-activated flips.
-    -- depth 1 → 1 extra, depth 2 → 2, ... depth CHAIN_SPAWN_MAX_DEPTH → N extras.
-    -- depth 0 is the player's own flip; skip spawn for that.
-    if depth > 0 then
+    -- Spawn extra coins only when:
+    --   • this is a chain hit (depth > 0), not the player's direct flip
+    --   • the activated coin is an egg (only eggs split)
+    --   • the coin itself wasn't already spawned (spawned coins don't multiply)
+    if depth > 0 and coin.itemType == "egg" and not coin.isSpawned then
       Spawn.spawnCoinsAt(self, lx, ly, depth, coin.tier or 0)
     end
 
