@@ -205,9 +205,21 @@ local function rebuildLayout()
   L.boardW = L.borderW - BORDER_T * 2
   L.boardH = L.borderH - BORDER_T * 2
 
-  -- Concentric-rect zone insets (px from each board edge).
-  -- White outer strip → Blue band → Yellow band → Red centre.
-  local s  = math.min(L.boardW, L.boardH)
+  -- Blank white START strip along the bottom of the board. Coins begin here;
+  -- it is >= 1/3 of the board height and scores nothing (a safe re-flip area).
+  L.startH = floor(L.boardH * 0.34)
+  L.startY = L.boardY + L.boardH - L.startH   -- top edge of the start strip
+
+  -- Scoring target area = the board ABOVE the start strip. The concentric
+  -- zone rectangles are inset from THIS sub-rectangle, not the whole board.
+  L.targetX = L.boardX
+  L.targetY = L.boardY
+  L.targetW = L.boardW
+  L.targetH = L.boardH - L.startH
+
+  -- Concentric-rect zone insets (px from each target-area edge).
+  -- White margin → Blue band → Yellow band → Red centre.
+  local s  = math.min(L.targetW, L.targetH)
   L.zone1  = floor(s * 0.08)   -- white → blue  boundary
   L.zone2  = floor(s * 0.20)   -- blue  → yellow boundary
   L.zone3  = floor(s * 0.34)   -- yellow → red  boundary
@@ -249,29 +261,38 @@ local function scatterCoins(n, item)
   return coins
 end
 
--- scatterBoard: places 5 coins (mid/easy/easy/mini/hard) with spacing
--- checks. Returns a table of Coin instances with itemType set.
+-- scatterBoard: places the floor's coins as three KINDS of food coin --
+-- toast (large, easy), egg (medium), skull (small, hard) -- each a different
+-- size and difficulty. Every coin STARTS inside the blank white start strip
+-- along the bottom of the board (L.startY .. board bottom); the player flips
+-- them up into the colored scoring zones. Spacing-checked. Returns a table of
+-- Coin instances with itemType set.
 local function scatterBoard()
-  local easyR    = floor(L.coinR * Tiers.EASY_COIN_RADIUS_SCALE)
-  local miniR    = floor(L.coinR * Tiers.MINI_COIN_RADIUS_SCALE)
-  local midItem  = Items.byId("coin")
-  local easyItem = Items.byId("easy_coin")
-  local miniItem = Items.byId("mini_coin")
-  local hardItem = Items.byId("hard_coin")
+  local toastR = floor(L.coinR * 1.15)   -- large
+  local eggR   = L.coinR                  -- medium
+  local skullR = floor(L.coinR * 0.65)   -- small
+  local toastItem = Items.byId("toast")
+  local eggItem   = Items.byId("egg")
+  local skullItem = Items.byId("skull")
   local specs = {
-    { radius = L.coinR, itemType = "coin",      item = midItem  },
-    { radius = easyR,   itemType = "easy_coin", item = easyItem },
-    { radius = easyR,   itemType = "easy_coin", item = easyItem },
-    { radius = miniR,   itemType = "mini_coin", item = miniItem },
-    { radius = L.coinR, itemType = "hard_coin", item = hardItem },
+    { radius = toastR, itemType = "toast", item = toastItem },
+    { radius = eggR,   itemType = "egg",   item = eggItem   },
+    { radius = eggR,   itemType = "egg",   item = eggItem   },
+    { radius = skullR, itemType = "skull", item = skullItem },
+    { radius = toastR, itemType = "toast", item = toastItem },
   }
+  -- Confine the initial scatter to the blank white start strip.
+  local stripTop    = floor(L.startY + 4)
   local coins       = {}
-  local maxAttempts = 60
+  local maxAttempts = 80
   for _, spec in ipairs(specs) do
-    local cr = spec.radius
+    local cr  = spec.radius
+    local loY = max(stripTop + cr, floor(L.boardY + cr))
+    local hiY = floor(L.boardY + L.boardH - cr)
+    if hiY < loY then hiY = loY end
     for attempt = 1, maxAttempts do
       local x = love.math.random(floor(L.boardX + cr), floor(L.boardX + L.boardW - cr))
-      local y = love.math.random(floor(L.boardY + cr), floor(L.boardY + L.boardH - cr))
+      local y = love.math.random(loY, hiY)
       local ok = true
       for j = 1, #coins do
         local c = coins[j]
@@ -524,6 +545,8 @@ end
 local function resolveFlip(self, coin, landingX, landingY)
   local bx, by   = L.boardX, L.boardY
   local bw, bh   = L.boardW, L.boardH
+  local tx, ty   = L.targetX, L.targetY
+  local tw, th   = L.targetW, L.targetH
   local z1, z2, z3 = L.zone1, L.zone2, L.zone3
   local tierMult = Tiers[(coin.tier or 0) + 1].mult
 
@@ -535,9 +558,9 @@ local function resolveFlip(self, coin, landingX, landingY)
     return "off_board_miss", 0
   end
 
-  -- Red centre (innermost).
-  if landingX >= bx + z3 and landingX <= bx + bw - z3 and
-     landingY >= by + z3 and landingY <= by + bh - z3 then
+  -- Red centre (innermost) -- inset from the target area.
+  if landingX >= tx + z3 and landingX <= tx + tw - z3 and
+     landingY >= ty + z3 and landingY <= ty + th - z3 then
     local gain = max(1, floor(POINTS.red * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
@@ -545,8 +568,8 @@ local function resolveFlip(self, coin, landingX, landingY)
   end
 
   -- Yellow band.
-  if landingX >= bx + z2 and landingX <= bx + bw - z2 and
-     landingY >= by + z2 and landingY <= by + bh - z2 then
+  if landingX >= tx + z2 and landingX <= tx + tw - z2 and
+     landingY >= ty + z2 and landingY <= ty + th - z2 then
     local gain = max(1, floor(POINTS.yellow * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
@@ -554,8 +577,8 @@ local function resolveFlip(self, coin, landingX, landingY)
   end
 
   -- Blue band.
-  if landingX >= bx + z1 and landingX <= bx + bw - z1 and
-     landingY >= by + z1 and landingY <= by + bh - z1 then
+  if landingX >= tx + z1 and landingX <= tx + tw - z1 and
+     landingY >= ty + z1 and landingY <= ty + th - z1 then
     local gain = max(1, floor(POINTS.blue * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
@@ -928,23 +951,31 @@ function Game:draw()
   lg.setColor(COLOR_BOARD)
   lg.rectangle("fill", L.boardX, L.boardY, L.boardW, L.boardH)
 
-  -- Board scoring zones: concentric rectangles layered outermost → innermost.
-  -- White board surface (drawn above) is the outer no-score strip.
-  -- Blue (1 pt) → Yellow (2 pts) → Red centre (3 pts) sit on top.
-  local bx, by = L.boardX, L.boardY
-  local bw, bh = L.boardW, L.boardH
+  -- Board scoring zones: concentric rectangles inside the TARGET area (the
+  -- board above the white start strip). The white board surface (drawn above)
+  -- is the no-score region; Blue (1) → Yellow (2) → Red centre (3) sit on top.
+  local tx, ty = L.targetX, L.targetY
+  local tw, th = L.targetW, L.targetH
   local z1, z2, z3 = L.zone1, L.zone2, L.zone3
   lg.setColor(COLOR_ZONE_BLUE)
-  lg.rectangle("fill", bx + z1, by + z1, bw - z1*2, bh - z1*2)
+  lg.rectangle("fill", tx + z1, ty + z1, tw - z1*2, th - z1*2)
   lg.setColor(COLOR_ZONE_YELLOW)
-  lg.rectangle("fill", bx + z2, by + z2, bw - z2*2, bh - z2*2)
+  lg.rectangle("fill", tx + z2, ty + z2, tw - z2*2, th - z2*2)
   lg.setColor(COLOR_ZONE_RED)
-  lg.rectangle("fill", bx + z3, by + z3, bw - z3*2, bh - z3*2)
+  lg.rectangle("fill", tx + z3, ty + z3, tw - z3*2, th - z3*2)
   lg.setColor(COLOR_ZONE_BORDER)
   lg.setLineWidth(2)
-  lg.rectangle("line", bx + z1, by + z1, bw - z1*2, bh - z1*2)
-  lg.rectangle("line", bx + z2, by + z2, bw - z2*2, bh - z2*2)
-  lg.rectangle("line", bx + z3, by + z3, bw - z3*2, bh - z3*2)
+  lg.rectangle("line", tx + z1, ty + z1, tw - z1*2, th - z1*2)
+  lg.rectangle("line", tx + z2, ty + z2, tw - z2*2, th - z2*2)
+  lg.rectangle("line", tx + z3, ty + z3, tw - z3*2, th - z3*2)
+
+  -- Divider between the scoring zone and the blank white start strip, plus a
+  -- faint label marking where the coins begin.
+  lg.setColor(COLOR_ZONE_BORDER)
+  lg.setLineWidth(2)
+  lg.line(L.boardX, L.startY, L.boardX + L.boardW, L.startY)
+  lg.setColor(0.55, 0.55, 0.55, 0.55)
+  lg.printf("START ZONE", L.boardX, L.startY + floor(L.startH * 0.5) - 8, L.boardW, "center")
 
   -- Coins.
   for i = 1, #self.coins do self.coins[i]:draw() end
