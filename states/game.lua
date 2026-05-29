@@ -177,6 +177,13 @@ local NUM_FLOORS        = 3
 -- Tight per Balatro lesson; the big numbers come from the multiplier chain.
 local POINTS = { red = 3, yellow = 2, blue = 1 }  -- zone point values
 
+-- Chain-reaction score multipliers by hop depth.
+--   depth 0  player flip (normal):          1×
+--   depth 1  first  knocked coin:           2×
+--   depth 2  second knocked coin:          10×
+--   depth 3  third  knocked coin:         100×  (×10 again)
+local CHAIN_BONUS = { [0] = 1, [1] = 2, [2] = 10, [3] = 100 }
+
 local PANEL_W   = 220   -- left score panel width
 local BORDER_T  = 10    -- board border thickness (pixels each side)
 local MARGIN    = 12    -- gap between screen edge/panel and border outer edge
@@ -542,13 +549,14 @@ end
 --   blue band    → 1 pt, feeds multiplier
 --   yellow band  → 2 pts, feeds multiplier
 --   red centre   → 3 pts, feeds multiplier
-local function resolveFlip(self, coin, landingX, landingY)
-  local bx, by   = L.boardX, L.boardY
-  local bw, bh   = L.boardW, L.boardH
-  local tx, ty   = L.targetX, L.targetY
-  local tw, th   = L.targetW, L.targetH
+local function resolveFlip(self, coin, landingX, landingY, depth)
+  local bx, by    = L.boardX, L.boardY
+  local bw, bh    = L.boardW, L.boardH
+  local tx, ty    = L.targetX, L.targetY
+  local tw, th    = L.targetW, L.targetH
   local z1, z2, z3 = L.zone1, L.zone2, L.zone3
-  local tierMult = Tiers[(coin.tier or 0) + 1].mult
+  local tierMult  = Tiers[(coin.tier or 0) + 1].mult
+  local chainMult = CHAIN_BONUS[depth or 0] or 1
 
   -- Off-board: full miss, chain resets.
   if landingX < bx or landingX > bx + bw or
@@ -561,7 +569,7 @@ local function resolveFlip(self, coin, landingX, landingY)
   -- Red centre (innermost) -- inset from the target area.
   if landingX >= tx + z3 and landingX <= tx + tw - z3 and
      landingY >= ty + z3 and landingY <= ty + th - z3 then
-    local gain = max(1, floor(POINTS.red * tierMult * self.multiplier))
+    local gain = max(1, floor(POINTS.red * tierMult * self.multiplier * chainMult))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "red", gain
@@ -570,7 +578,7 @@ local function resolveFlip(self, coin, landingX, landingY)
   -- Yellow band.
   if landingX >= tx + z2 and landingX <= tx + tw - z2 and
      landingY >= ty + z2 and landingY <= ty + th - z2 then
-    local gain = max(1, floor(POINTS.yellow * tierMult * self.multiplier))
+    local gain = max(1, floor(POINTS.yellow * tierMult * self.multiplier * chainMult))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "yellow", gain
@@ -579,7 +587,7 @@ local function resolveFlip(self, coin, landingX, landingY)
   -- Blue band.
   if landingX >= tx + z1 and landingX <= tx + tw - z1 and
      landingY >= ty + z1 and landingY <= ty + th - z1 then
-    local gain = max(1, floor(POINTS.blue * tierMult * self.multiplier))
+    local gain = max(1, floor(POINTS.blue * tierMult * self.multiplier * chainMult))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "blue", gain
@@ -615,7 +623,7 @@ fireFlip = function(self, coin, contactX, contactY, depth)
   -- Player gate: only depth-0 flips block subsequent player input.
   if depth == 0 then self.activeCoin = coin end
   coin:launch(angle, power, arc, item, function(lx, ly)
-    local zone, _ = resolveFlip(self, coin, lx, ly)
+    local zone, _ = resolveFlip(self, coin, lx, ly, depth)
     if zone == "red" or zone == "yellow" or zone == "blue" then
       coin.used = true   -- scoring zone: retire from player interaction
     elseif zone == "white_miss" then
