@@ -499,10 +499,18 @@ local function drawHoverDebug(coin, item, dotX, dotY)
   if region.power then power = region.power end
   local endX = coin.x + cos(angle) * power
   local endY = coin.y + sin(angle) * power
-  lg.setColor(1, 0.45, 0, 1)
+  lg.setColor(1, 0.08, 0.08, 1)
   lg.setLineWidth(2)
   lg.line(coin.x, coin.y, endX, endY)
-  lg.circle("line", endX, endY, 12)
+  -- Bullseye target at landing point.
+  lg.circle("line", endX, endY, 18)
+  lg.circle("line", endX, endY, 10)
+  lg.circle("fill", endX, endY, 3)
+  -- Crosshair lines through the target center.
+  lg.line(endX - 24, endY, endX - 20, endY)
+  lg.line(endX + 20, endY, endX + 24, endY)
+  lg.line(endX, endY - 24, endX, endY - 20)
+  lg.line(endX, endY + 20, endX, endY + 24)
   lg.setColor(1, 1, 1, 1)
 end
 
