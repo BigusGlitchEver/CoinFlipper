@@ -1139,25 +1139,24 @@ function Game:draw()
     local tItem = Items.byId(tCoin.itemType or "coin") or self.activeCoinItem
     local oX, oY, oDist = tCoin:pressedBy(self.armedDotX, self.armedDotY)
     if oX then
-      local tReg = tCoin:regionAt(oX, oY, tItem)
-      if tReg then
-        local tAng = tReg.angle
-        local tPow, tArc = resolveShot(tItem, oDist)
-        if tReg.power then tPow = tReg.power end
-        if tReg.arc   then tArc = tReg.arc   end
-        local tlx = tCoin.x + cos(tAng) * tPow
-        local tly = tCoin.y + sin(tAng) * tPow
-        local N = 20
-        for _i = 1, N do
-          local t  = _i / N
-          local px = tCoin.x + (tlx - tCoin.x) * t
-          local py = tCoin.y + (tly - tCoin.y) * t - sin(t * pi) * tArc
-          local fa = (1 - t * 0.65) * 0.52   -- fade toward landing end
-          lg.setColor(1, 1, 1, fa)
-          lg.circle("fill", px, py, 2.5)
-        end
-        lg.setColor(1, 1, 1, 1)
-      end
+      -- Direction: straight geometric line from the red bar contact point
+      -- through the coin center. No region snapping (that caused the jitter).
+      local tAng = math.atan2(tCoin.y - self.armedDotY, tCoin.x - self.armedDotX)
+      local tPow = resolveShot(tItem, oDist)
+      local tlx  = tCoin.x + cos(tAng) * tPow
+      local tly  = tCoin.y + sin(tAng) * tPow
+      -- Flat aiming line + bullseye target at the landing point.
+      lg.setColor(1, 0.08, 0.08, 1)
+      lg.setLineWidth(2)
+      lg.line(tCoin.x, tCoin.y, tlx, tly)
+      lg.circle("line", tlx, tly, 18)
+      lg.circle("line", tlx, tly, 10)
+      lg.circle("fill", tlx, tly, 3)
+      lg.line(tlx - 24, tly, tlx - 20, tly)
+      lg.line(tlx + 20, tly, tlx + 24, tly)
+      lg.line(tlx, tly - 24, tlx, tly - 20)
+      lg.line(tlx, tly + 20, tlx, tly + 24)
+      lg.setColor(1, 1, 1, 1)
     end
   end
 
