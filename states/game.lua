@@ -648,7 +648,10 @@ tryChainFlip = function(self, landingCoin, lx, ly, depth)
   for i = 1, #self.coins do
     local target = self.coins[i]
     if target ~= landingCoin
-       and not target.flipping and not target.used then
+       and not target.flipping then
+      -- NOTE: used=true coins (already scored) CAN be chain-activated.
+      -- Their first-landing score is already banked; the chain landing adds
+      -- on top.  Only `flipping` (currently airborne) excludes a coin here.
       local dx   = target.x - lx
       local dy   = target.y - ly
       local d2   = dx * dx + dy * dy
