@@ -32,12 +32,6 @@ local pi    = math.pi
 local huge  = math.huge
 local floor = math.floor
 
--- Hand-drawn tool sprites. Black background PNG drawn with blend mode "add":
--- black (0,0,0) contributes nothing to the destination, grey tints slightly,
--- white marks pop at full brightness. Loaded once at module level.
-local spriteCircle   = love.graphics.newImage("assets/tools/circle.png")
-local spriteTriangle = love.graphics.newImage("assets/tools/triangle.png")
-
 -- Tiny helper: linear interpolation in [0, 1].
 local function lerp(a, b, t) return a + (b - a) * t end
 
@@ -78,17 +72,18 @@ local TOOL_R_FACTOR = 1.5
 local DOT_UX, DOT_UY      = {}, {}
 local DOT_ANGLES_RAD      = {}    -- center angle of each bar in radians
 do
-  local angles = { 270, 330, 30, 90, 150, 210 }
+  -- Measured contact-mark positions (fractions of toolR) matching the
+  -- hand-drawn reference. atan2 derives each arc panel's center angle so
+  -- the Simon-Says slivers line up with the dots.
+  DOT_UX[1] =  0.006;  DOT_UY[1] = -0.799  -- top
+  DOT_UX[2] =  0.637;  DOT_UY[2] = -0.586  -- top-right
+  DOT_UX[3] =  0.796;  DOT_UY[3] =  0.045  -- right
+  DOT_UX[4] =  0.596;  DOT_UY[4] =  0.520  -- bottom-right
+  DOT_UX[5] = -0.608;  DOT_UY[5] =  0.513  -- bottom-left
+  DOT_UX[6] = -0.771;  DOT_UY[6] = -0.035  -- left
   for i = 1, 6 do
-    local rad = angles[i] * pi / 180
-    DOT_UX[i]         = cos(rad)
-    DOT_UY[i]         = sin(rad)
-    DOT_ANGLES_RAD[i] = rad
+    DOT_ANGLES_RAD[i] = math.atan2(DOT_UY[i], DOT_UX[i])
   end
-  -- Entries 7 and 8: right (0 deg) and left (180 deg), completing the
-  -- 8-mark ring that matches the painted marks on Circle.png.
-  DOT_UX[7] = cos(0);   DOT_UY[7] = sin(0)    -- right
-  DOT_UX[8] = cos(pi);  DOT_UY[8] = sin(pi)   -- left
 end
 local SLIVER_HALF_WIDTH = 9 * pi / 180   -- half-width of interior sliver tab
 local SLIVER_LINE_WIDTH = 5              -- sliver arc line width
@@ -117,12 +112,12 @@ local TOOL_TRIANGLE = "triangle"
 local TRI_UX = {}
 local TRI_UY = {}
 do
-  local triAngles = { 270, 30, 150 }
-  for _ti = 1, 3 do
-    local rad = triAngles[_ti] * pi / 180
-    TRI_UX[_ti] = cos(rad)
-    TRI_UY[_ti] = sin(rad)
-  end
+  -- Measured tip positions (fractions of toolR) matching the hand-drawn
+  -- reference. These 3 tips ARE the contact vertices used by findPressedCoin,
+  -- so the drawn shape and the hit geometry stay in sync automatically.
+  TRI_UX[1] =  0.159;  TRI_UY[1] = -0.630  -- top tip
+  TRI_UX[2] =  0.830;  TRI_UY[2] =  0.576  -- bottom-right tip
+  TRI_UX[3] = -0.833;  TRI_UY[3] =  0.707  -- bottom-left tip
 end
 local TRI_COLORS = {
   { 1.00, 0.60, 0.15 },  -- tip 1: amber (top)
@@ -297,68 +292,69 @@ end
 
 -- ---------- Flip tool (round, follows the cursor) ----------
 
--- Triangle tool: hand-drawn sprite (Triangle.png) scaled to L.toolR*2 diameter.
--- Blend mode "add" makes the black background invisible; grey body tints the
--- board slightly; white marks at the 3 tip positions pop at full brightness.
--- selected=true draws a cyan highlight ring just outside the tool.
+-- Triangle tool: pure-primitive grey body + dark edge outline. The 3 edges
+-- ARE the contact surface. selected=true adds a cyan highlight ring; the 3
+-- tips carry colored contact dots (amber / teal / violet).
 local function drawTriangleToolAt(x, y, selected)
-  local r     = L.toolR
-  local diam  = r * 2
-  local sw    = spriteTriangle:getWidth()
-  local sh    = spriteTriangle:getHeight()
-  local scale = diam / max(sw, sh)
-  local ox    = sw * 0.5
-  local oy    = sh * 0.5
-  -- Additive blend: black bg vanishes, grey/white marks composite naturally.
-  lg.setBlendMode("add")
-  lg.setColor(1, 1, 1, 1)
-  lg.draw(spriteTriangle, x, y, 0, scale, scale, ox, oy)
-  lg.setBlendMode("alpha")
+  local r   = L.toolR
+  local v1x = x + TRI_UX[1] * r;  local v1y = y + TRI_UY[1] * r
+  local v2x = x + TRI_UX[2] * r;  local v2y = y + TRI_UY[2] * r
+  local v3x = x + TRI_UX[3] * r;  local v3y = y + TRI_UY[3] * r
+  -- Translucent grey body.
+  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.30)
+  lg.polygon("fill", v1x, v1y, v2x, v2y, v3x, v3y)
+  -- Dark edge outline.
+  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.75)
+  lg.setLineWidth(2)
+  lg.polygon("line", v1x, v1y, v2x, v2y, v3x, v3y)
   -- Cyan highlight ring when this tool is active.
   if selected then
     lg.setColor(COLOR_HIGHLIGHT[1], COLOR_HIGHLIGHT[2], COLOR_HIGHLIGHT[3], 0.85)
     lg.setLineWidth(3)
     lg.circle("line", x, y, r + 6)
-    lg.setColor(1, 1, 1, 1)
   end
-  -- White contact marks at the 3 tip positions (match Triangle.png painted marks).
-  lg.setColor(1, 1, 1, 1)
+  -- Colored contact dots at the 3 tip positions.
   for i = 1, 3 do
-    lg.circle("fill", x + TRI_UX[i] * r, y + TRI_UY[i] * r, 5)
+    local col = TRI_COLORS[i]
+    lg.setColor(col[1], col[2], col[3], 1)
+    lg.circle("fill", x + TRI_UX[i] * r, y + TRI_UY[i] * r, 6)
   end
   lg.setColor(1, 1, 1, 1)
 end
 
--- Circle tool: hand-drawn sprite (Circle.png) scaled to L.toolR*2 diameter.
--- Blend mode "add" makes the black background invisible; grey body tints the
--- board slightly; 8 white marks at rim positions pop at full brightness.
--- selected=true draws a cyan highlight ring just outside the tool.
+-- Circle tool: pure-primitive translucent disc + dark rim ring + the 6
+-- Simon-Says colored arc panels. The rim IS the contact surface.
+-- selected=true adds a cyan highlight ring; the 6 contact dots mark the
+-- measured rim positions (panel centers).
 local function drawToolAt(x, y, selected)
   local toolR = L.toolR
-  local diam  = toolR * 2
-  local sw    = spriteCircle:getWidth()
-  local sh    = spriteCircle:getHeight()
-  local scale = diam / max(sw, sh)
-  local ox    = sw * 0.5
-  local oy    = sh * 0.5
-  -- Additive blend: black bg vanishes, grey/white marks composite naturally.
-  lg.setBlendMode("add")
-  lg.setColor(1, 1, 1, 1)
-  lg.draw(spriteCircle, x, y, 0, scale, scale, ox, oy)
-  lg.setBlendMode("alpha")
+  -- Translucent grey disc.
+  lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.30)
+  lg.circle("fill", x, y, toolR)
+  -- Dark rim ring.
+  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.75)
+  lg.setLineWidth(2)
+  lg.circle("line", x, y, toolR)
+  -- Simon-Says colored arc panels, one per contact mark.
+  local sliverR = toolR - 5
+  lg.setLineWidth(SLIVER_LINE_WIDTH)
+  for d = 1, 6 do
+    local cAng = DOT_ANGLES_RAD[d]
+    local col  = DOT_COLORS[d]
+    lg.setColor(col[1], col[2], col[3], 1)
+    lg.arc("line", "open", x, y, sliverR, cAng - SLIVER_HALF_WIDTH, cAng + SLIVER_HALF_WIDTH)
+  end
   -- Cyan highlight ring when this tool is active.
   if selected then
     lg.setColor(COLOR_HIGHLIGHT[1], COLOR_HIGHLIGHT[2], COLOR_HIGHLIGHT[3], 0.85)
     lg.setLineWidth(3)
     lg.circle("line", x, y, toolR + 6)
-    lg.setColor(1, 1, 1, 1)
   end
-  -- White contact marks at the 8 rim positions (match Circle.png painted marks).
-  -- DOT_UX/DOT_UY indices 1-6 are the 6 original 60-deg positions;
-  -- 7 = right (0 deg), 8 = left (180 deg) complete the 8-mark ring.
-  lg.setColor(1, 1, 1, 1)
-  for i = 1, 8 do
-    lg.circle("fill", x + DOT_UX[i] * toolR, y + DOT_UY[i] * toolR, 4)
+  -- Colored contact dots at the 6 measured rim positions.
+  for d = 1, 6 do
+    local col = DOT_COLORS[d]
+    lg.setColor(col[1], col[2], col[3], 1)
+    lg.circle("fill", x + DOT_UX[d] * toolR, y + DOT_UY[d] * toolR, 6)
   end
   lg.setColor(1, 1, 1, 1)
 end
@@ -1002,7 +998,7 @@ function Game:mousepressed(x, y, button)
   -- Re-sample so the click decision uses the freshest cursor position.
   self.toolX, self.toolY = x, y
   self:_refreshHover()
-  if not self.armedDotIdx then return end            -- no dot inside any coin
+  if not self.armedDotX then return end              -- no coin in contact
   fireFlip(self, self.hoveredCoin, self.armedDotX, self.armedDotY, 0)
 end
 
