@@ -7,6 +7,10 @@ local StateMachine = require("statemachine")
 
 local lg = love.graphics
 
+-- Hand-drawn house sprite, drawn in place of the plain fill circle. Tinted
+-- per conquest state (green = conquered, white = unlocked, grey = locked).
+local spriteHouse = love.graphics.newImage("assets/map/house.png")
+
 local Map = {}
 
 -- Module-scope so conquest state survives state transitions.
@@ -53,15 +57,24 @@ function Map:draw()
   lg.setColor(0.1, 0.1, 0.1)
   lg.printf("NEIGHBORHOOD", 0, 60, lg.getWidth(), "center")
 
+  -- Scale the sprite so its longer dimension fits within HOUSE_RADIUS*2,
+  -- centered on each house point. Computed once (all houses share the art).
+  local hw     = spriteHouse:getWidth()
+  local hh     = spriteHouse:getHeight()
+  local hScale = (HOUSE_RADIUS * 2) / math.max(hw, hh)
+  local hox    = hw * 0.5
+  local hoy    = hh * 0.5
   for i, h in ipairs(houses) do
+    -- Color tint by conquest state.
     if h.conquered then
-      lg.setColor(0.25, 0.75, 0.30)
+      lg.setColor(0.25, 0.75, 0.30, 1)      -- green
     elseif isUnlocked(i) then
-      lg.setColor(0.80, 0.22, 0.22)
+      lg.setColor(1, 1, 1, 1)               -- unlocked: no tint
     else
-      lg.setColor(0.45, 0.45, 0.45)
+      lg.setColor(0.45, 0.45, 0.45, 0.7)    -- locked: greyed + dimmed
     end
-    lg.circle("fill", h.x, h.y, HOUSE_RADIUS)
+    lg.draw(spriteHouse, h.x, h.y, 0, hScale, hScale, hox, hoy)
+    -- White outline ring + labels (unchanged).
     lg.setColor(1, 1, 1)
     lg.setLineWidth(3)
     lg.circle("line", h.x, h.y, HOUSE_RADIUS)
