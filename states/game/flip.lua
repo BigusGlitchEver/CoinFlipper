@@ -99,14 +99,20 @@ M.findPressedCoin = findPressedCoin
 
 -- Grandma's House 4-zone landing resolution. Concentric rectangles tested
 -- innermost-first so the highest zone always wins.
+--
+-- Zone checks use the coin's EDGE, not its centre: a zone registers the moment
+-- any part of the coin's disc overlaps the zone's inner boundary. Each inset
+-- (z1/z2/z3) is shrunk by coin.radius so the threshold shifts outward to the
+-- coin edge. Inner zones (z3 > z2 > z1) also keep their relative order because
+-- the same offset is subtracted from all of them.
 local function resolveFlip(self, coin, landingX, landingY, depth)
   local bx, by    = L.boardX, L.boardY
   local bw, bh    = L.boardW, L.boardH
   local tx, ty    = L.targetX, L.targetY
   local tw, th    = L.targetW, L.targetH
-  local z1, z2, z3 = L.zone1, L.zone2, L.zone3
   local tierMult  = Tiers[(coin.tier or 0) + 1].mult
   local chainMult = CHAIN_BONUS[depth or 0] or 1
+  local cr        = coin.radius  -- edge-based offset
 
   -- Off-board: full miss, chain resets.
   if landingX < bx or landingX > bx + bw or
@@ -115,6 +121,12 @@ local function resolveFlip(self, coin, landingX, landingY, depth)
     self.multiplier = 1
     return "off_board_miss", 0
   end
+
+  -- Edge-adjusted zone insets: the zone triggers when the coin's rim reaches
+  -- the painted line, i.e. inset shrinks by the coin radius (clamped to >= 0).
+  local z1 = max(0, L.zone1 - cr)
+  local z2 = max(0, L.zone2 - cr)
+  local z3 = max(0, L.zone3 - cr)
 
   -- Red centre (innermost).
   if landingX >= tx + z3 and landingX <= tx + tw - z3 and
