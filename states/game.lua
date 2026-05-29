@@ -22,6 +22,7 @@ local Flip       = require("states.game.flip")
 local Spawn      = require("states.game.spawn")
 local RenderHud  = require("states.game.render_hud")
 local RenderBoard = require("states.game.render_board")
+local CardPanel  = require("ui.card_panel")
 
 local lg = love.graphics
 local lm = love.mouse
@@ -72,6 +73,26 @@ function Game:enter(prev, houseName)
   self.bonusReady = false
   self.bonusFlash = 0
   if self.trajectoryPreview == nil then self.trajectoryPreview = true end
+
+  -- Active-cards sidebar panel. render_hud positions it inside the "ACTIVE
+  -- CARDS" region each frame; the initial region here is a sane default.
+  self.cardPanel = CardPanel(0, 0, L.panelW - 20)
+  self.cardPanel:addCard({
+    cardType = "bicycle", rank = 7, suit = "heart",
+    name = "Marble Insurance",
+    description = "First dead-zone miss each floor is ignored",
+  })
+  self.cardPanel:addCard({
+    cardType = "bicycle", rank = 3, suit = "diamond",
+    name = "Compound Interest",
+    description = "+10% score per successful flip, stacks this floor",
+  })
+  self.cardPanel:addCard({
+    cardType = "monster",
+    name = "Magnet Slime",
+    description = "Coins drift toward higher-value zones each flip",
+  })
+
   lm.setVisible(false)
 end
 
@@ -146,6 +167,7 @@ function Game:update(dt)
   if self.scoreFlash  > 0 then self.scoreFlash  = self.scoreFlash  - dt end
   if self.bonusFlash  > 0 then self.bonusFlash  = self.bonusFlash  - dt end
   Spawn.replenishCoins(self)
+  if self.cardPanel then self.cardPanel:update(dt) end
 end
 
 function Game:draw()

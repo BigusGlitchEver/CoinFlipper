@@ -169,8 +169,12 @@ function M.draw(self)
   lg.setFont(F.SMALL)
   lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3])
   lg.print("ACTIVE CARDS", cx + 10, cy + 10)
-  lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3], 0.38)
-  lg.printf("NO CARDS YET", cx, cy + floor(c3h * 0.42), cw, "center")
+  -- Active-cards list (banner rows) drawn by the owning state's CardPanel.
+  -- It slots into this region; the empty-state text lives in CardPanel:draw().
+  if self.cardPanel then
+    self.cardPanel:setRegion(cx + 8, cy + 30, cw - 16)
+    self.cardPanel:draw()
+  end
 
   -- Preview toggle button — pinned to the bottom of the sidebar panel.
   local btnY = L.H - PREVIEW_BTN_H - pm
