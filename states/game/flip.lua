@@ -157,13 +157,16 @@ fireFlip = function(self, coin, contactX, contactY, depth)
   local item = (coin.itemType and Items.byId(coin.itemType)) or self.activeCoinItem
   local offX, offY, offDist = coin:pressedBy(contactX, contactY)
   if not offX then return end
+  -- Direction MUST match the trajectory preview: a true straight line from the
+  -- contact point through the coin center. We deliberately do NOT snap to the
+  -- coin's preset region.angle (that "coin math" sent the coin sideways).
+  local angle = math.atan2(coin.y - contactY, coin.x - contactX)
+  -- Power also matches the preview (resolveShot from the off-center distance).
+  -- arc is flight HEIGHT only; it never changes where the coin lands, so we
+  -- still take it from the region if one is present.
   local region = coin:regionAt(offX, offY, item)
-  local angle  = region and region.angle or -pi / 2
   local power, arc = resolveShot(item, offDist)
-  if region then
-    if region.power then power = region.power end
-    if region.arc   then arc   = region.arc   end
-  end
+  if region and region.arc then arc = region.arc end
   if depth == 0 then self.activeCoin = coin end
   coin:launch(angle, power, arc, item, function(lx, ly)
     local zone, gain = resolveFlip(self, coin, lx, ly, depth)
