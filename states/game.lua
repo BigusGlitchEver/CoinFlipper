@@ -154,6 +154,19 @@ local COLOR_BTN_TEXT       = { 0.78, 0.78, 0.78 }
 local COLOR_DEBUG_ON       = { 0.25, 0.80, 0.35 }
 local COLOR_TOOL_ACTIVE    = { 0.25, 0.60, 1.00 }  -- blue tint for selected tool btn
 
+-- Notebook / parchment HUD palette
+local COLOR_HUD_BG      = { 0.88, 0.84, 0.76 }  -- warm tan panel background
+local COLOR_CARD_BG     = { 0.98, 0.95, 0.88 }  -- cream card fill
+local COLOR_CARD_BORDER = { 0.48, 0.34, 0.18 }  -- warm brown card border
+local COLOR_CARD_LABEL  = { 0.38, 0.28, 0.14 }  -- dark brown label text
+local COLOR_CARD_VALUE  = { 0.11, 0.08, 0.04 }  -- near-black value text
+local COLOR_MULT_GOLD   = { 0.88, 0.60, 0.04 }  -- gold chain multiplier
+local COLOR_BAR_BG      = { 0.74, 0.68, 0.56 }  -- muted tan bar background
+local COLOR_BAR_FILL    = { 0.20, 0.56, 0.20 }  -- green progress fill
+
+-- HUD fonts — nil until first Game:enter (safe for module-load time).
+local HUD_FONT_DEFAULT, HUD_FONT_SMALL, HUD_FONT_MEDIUM, HUD_FONT_LARGE, HUD_FONT_HUGE
+
 -- ---------- Tunables ----------
 
 local COINS_PER_FLOOR = 5
@@ -681,6 +694,19 @@ function Game:enter(prev, houseName)
   self.toolX, self.toolY = lm.getPosition()
   self.toolType     = self.toolType or TOOL_CIRCLE  -- preserved across [R] restart
   self.debugRegions = self.debugRegions or false
+  -- Lazy-create HUD fonts once (safe: Game:enter always precedes Game:draw).
+  if not HUD_FONT_HUGE then
+    HUD_FONT_DEFAULT = lg.newFont(12)
+    HUD_FONT_SMALL   = lg.newFont(11)
+    HUD_FONT_MEDIUM  = lg.newFont(16)
+    HUD_FONT_LARGE   = lg.newFont(28)
+    HUD_FONT_HUGE    = lg.newFont(40)
+  end
+  -- HUD animation timers (reset each enter so restarts start clean).
+  self.multBounce   = 0
+  self.scoreFlash   = 0
+  self._prevMult    = 1
+  self._prevMarbles = 0
   -- Hide the OS cursor on the flip board -- the grey tool circle IS the
   -- pointer. lm.getPosition() still works while the cursor is hidden.
   lm.setVisible(false)
@@ -749,6 +775,21 @@ function Game:update(dt)
   if self.activeCoin and not self.activeCoin.flipping then
     self.activeCoin = nil
   end
+  -- HUD animation: detect score / multiplier changes and trigger timers.
+  if self.multiplier ~= self._prevMult then
+    if self.multiplier > (self._prevMult or 1) then
+      self.multBounce = 0.28   -- trigger scale-bounce
+    end
+    self._prevMult = self.multiplier
+  end
+  if self.marbles ~= self._prevMarbles then
+    if self.marbles > (self._prevMarbles or 0) then
+      self.scoreFlash = 0.20   -- trigger highlight flash
+    end
+    self._prevMarbles = self.marbles
+  end
+  if self.multBounce  > 0 then self.multBounce  = self.multBounce  - dt end
+  if self.scoreFlash  > 0 then self.scoreFlash  = self.scoreFlash  - dt end
 end
 
 function Game:draw()
@@ -756,124 +797,128 @@ function Game:draw()
   lg.setColor(COLOR_BG)
   lg.rectangle("fill", 0, 0, L.W, L.H)
 
-  -- Left score panel.
-  lg.setColor(COLOR_PANEL[1], COLOR_PANEL[2], COLOR_PANEL[3])
-  lg.rectangle("fill", L.panelX, 0, L.panelW, L.panelH)
+  -- ── Notebook HUD — three stacked card sections ──────────────────────
+  -- Warm parchment panel background.
+  lg.setColor(COLOR_HUD_BG[1], COLOR_HUD_BG[2], COLOR_HUD_BG[3])
+  lg.rectangle("fill", 0, 0, L.panelW, L.H)
 
-  local px = L.panelX + 18       -- left margin
-  local pw = L.panelW - 36       -- usable width
-  local py = 18
+  local pm = 10                  -- outer margin + gap between cards
+  local cx = pm                  -- card left edge
+  local cw = L.panelW - pm * 2  -- card usable width
+  local cy = pm                  -- running y cursor
 
+  -- ── Card 1: Floor Info ───────────────────────────────────────────────
+  local c1h = 88
+  lg.setColor(COLOR_CARD_BG[1], COLOR_CARD_BG[2], COLOR_CARD_BG[3])
+  lg.rectangle("fill", cx, cy, cw, c1h, 6, 6)
+  lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3])
+  lg.setLineWidth(2)
+  lg.rectangle("line", cx, cy, cw, c1h, 6, 6)
   -- House name
-  lg.setColor(COLOR_PANEL_VALUE[1], COLOR_PANEL_VALUE[2], COLOR_PANEL_VALUE[3])
-  lg.print(string.upper(self.houseName or "?"), px, py)
-  py = py + 22
-  lg.setColor(1, 1, 1, 0.12)
+  lg.setFont(HUD_FONT_MEDIUM)
+  lg.setColor(COLOR_CARD_VALUE[1], COLOR_CARD_VALUE[2], COLOR_CARD_VALUE[3])
+  lg.print(string.upper(self.houseName or "?"), cx + 10, cy + 8)
+  -- Thin divider
+  lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3], 0.30)
   lg.setLineWidth(1)
-  lg.line(px, py, px + pw, py)
-  py = py + 12
+  lg.line(cx + 10, cy + 30, cx + cw - 10, cy + 30)
+  -- Floor and threshold
+  lg.setFont(HUD_FONT_SMALL)
+  lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3])
+  lg.print("FLOOR  " .. self.floor .. " / " .. NUM_FLOORS, cx + 10, cy + 38)
+  lg.print("NEXT:  " .. (FLOOR_THRESHOLDS[self.floor] or "?"), cx + 10, cy + 60)
+  cy = cy + c1h + pm
 
-  -- Score
-  lg.setColor(COLOR_PANEL_LABEL[1], COLOR_PANEL_LABEL[2], COLOR_PANEL_LABEL[3])
-  lg.print("SCORE", px, py)
-  py = py + 18
-  local tier0col = Tiers[1].color
-  local circR = 10
-  lg.setColor(tier0col[1], tier0col[2], tier0col[3])
-  lg.circle("fill", px + circR, py + circR, circR)
-  lg.setColor(0.12, 0.12, 0.12, 0.70)
-  lg.setLineWidth(1.5)
-  lg.circle("line", px + circR, py + circR, circR)
-  lg.setColor(COLOR_PANEL_VALUE[1], COLOR_PANEL_VALUE[2], COLOR_PANEL_VALUE[3])
-  lg.print(tostring(self.marbles), px + circR * 2 + 10, py + 3)
-  py = py + circR * 2 + 10
-  local mc = self.multiplier > 1 and COLOR_MULT_ACTIVE or COLOR_MULT_IDLE
-  lg.setColor(mc[1], mc[2], mc[3])
-  lg.print("x" .. self.multiplier .. "  MULT", px, py)
-  py = py + 22
-  lg.setColor(1, 1, 1, 0.12)
-  lg.setLineWidth(1)
-  lg.line(px, py, px + pw, py)
-  py = py + 12
-
-  -- Floor
-  lg.setColor(COLOR_PANEL_LABEL[1], COLOR_PANEL_LABEL[2], COLOR_PANEL_LABEL[3])
-  lg.print("FLOOR", px, py)
-  py = py + 18
-  lg.setColor(COLOR_PANEL_VALUE[1], COLOR_PANEL_VALUE[2], COLOR_PANEL_VALUE[3])
-  lg.print(tostring(self.floor) .. " / " .. NUM_FLOORS, px, py)
-  py = py + 22
-  lg.setColor(COLOR_PANEL_LABEL[1], COLOR_PANEL_LABEL[2], COLOR_PANEL_LABEL[3])
-  lg.print("NEED  " .. (FLOOR_THRESHOLDS[self.floor] or "?"), px, py)
-  py = py + 22
-  lg.setColor(1, 1, 1, 0.12)
-  lg.setLineWidth(1)
-  lg.line(px, py, px + pw, py)
-  py = py + 12
-
-  -- Tool selector
-  lg.setColor(COLOR_PANEL_LABEL[1], COLOR_PANEL_LABEL[2], COLOR_PANEL_LABEL[3])
-  lg.print("TOOL", px, py)
-  py = py + 18
-  local halfBtnW = (pw - 8) / 2
-  self._toolBtnY = py
-  for bi = 1, 2 do
-    local bx     = px + (bi - 1) * (halfBtnW + 8)
-    local isCirc = (bi == 1)
-    local active = (isCirc and self.toolType == TOOL_CIRCLE) or
-                   (not isCirc and self.toolType == TOOL_TRIANGLE)
-    local bgCol  = active and COLOR_TOOL_ACTIVE or COLOR_BTN
-    local brCol  = active and COLOR_TOOL_ACTIVE or COLOR_BTN_BORDER
-    lg.setColor(bgCol[1], bgCol[2], bgCol[3], active and 0.28 or 1)
-    lg.rectangle("fill", bx, py, halfBtnW, 38, 4, 4)
-    lg.setColor(brCol[1], brCol[2], brCol[3])
-    lg.setLineWidth(active and 2 or 1)
-    lg.rectangle("line", bx, py, halfBtnW, 38, 4, 4)
-    local iconX = bx + halfBtnW * 0.5
-    local iconY = py + 19
-    local iconR = 11
-    local iconA = active and 1.0 or 0.55
-    if isCirc then
-      lg.setColor(1, 1, 1, iconA * 0.30)
-      lg.circle("fill", iconX, iconY, iconR)
-      lg.setColor(1, 1, 1, iconA)
-      lg.setLineWidth(2)
-      lg.circle("line", iconX, iconY, iconR)
-    else
-      local ti1x = iconX + TRI_UX[1] * iconR
-      local ti1y = iconY + TRI_UY[1] * iconR
-      local ti2x = iconX + TRI_UX[2] * iconR
-      local ti2y = iconY + TRI_UY[2] * iconR
-      local ti3x = iconX + TRI_UX[3] * iconR
-      local ti3y = iconY + TRI_UY[3] * iconR
-      lg.setColor(1, 1, 1, iconA * 0.30)
-      lg.polygon("fill", ti1x, ti1y, ti2x, ti2y, ti3x, ti3y)
-      lg.setColor(1, 1, 1, iconA)
-      lg.setLineWidth(2)
-      lg.polygon("line", ti1x, ti1y, ti2x, ti2y, ti3x, ti3y)
-    end
+  -- ── Card 2: Marble Progress ──────────────────────────────────────────
+  local c2h = 182
+  lg.setColor(COLOR_CARD_BG[1], COLOR_CARD_BG[2], COLOR_CARD_BG[3])
+  lg.rectangle("fill", cx, cy, cw, c2h, 6, 6)
+  lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3])
+  lg.setLineWidth(2)
+  lg.rectangle("line", cx, cy, cw, c2h, 6, 6)
+  -- Section label
+  lg.setFont(HUD_FONT_SMALL)
+  lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3])
+  lg.print("MARBLES EARNED", cx + 10, cy + 8)
+  -- Score flash highlight (brief amber glow on change)
+  if self.scoreFlash > 0 then
+    local fi = self.scoreFlash / 0.20
+    lg.setColor(0.92, 0.70, 0.15, 0.26 * fi)
+    lg.rectangle("fill", cx + 6, cy + 22, cw - 12, 50, 4, 4)
   end
-  py = py + 50
-
-  -- Restart button
-  lg.setColor(COLOR_BTN[1], COLOR_BTN[2], COLOR_BTN[3])
-  lg.rectangle("fill", px, py, pw, 26, 4, 4)
-  lg.setColor(COLOR_BTN_BORDER[1], COLOR_BTN_BORDER[2], COLOR_BTN_BORDER[3])
+  -- Hero score number
+  lg.setFont(HUD_FONT_HUGE)
+  lg.setColor(COLOR_CARD_VALUE[1], COLOR_CARD_VALUE[2], COLOR_CARD_VALUE[3])
+  lg.print(tostring(self.marbles), cx + 10, cy + 24)
+  -- Progress bar toward threshold
+  local barX   = cx + 10
+  local barY   = cy + 82
+  local barW   = cw - 32        -- gap on right for star
+  local barH   = 14
+  local thresh = FLOOR_THRESHOLDS[self.floor] or 1
+  local frac   = math.min(self.marbles / thresh, 1)
+  lg.setColor(COLOR_BAR_BG[1], COLOR_BAR_BG[2], COLOR_BAR_BG[3])
+  lg.rectangle("fill", barX, barY, barW, barH, 5, 5)
+  if frac > 0 then
+    lg.setColor(COLOR_BAR_FILL[1], COLOR_BAR_FILL[2], COLOR_BAR_FILL[3])
+    lg.rectangle("fill", barX, barY, max(barH, floor(barW * frac)), barH, 5, 5)
+  end
+  lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3], 0.55)
   lg.setLineWidth(1)
-  lg.rectangle("line", px, py, pw, 26, 4, 4)
-  lg.setColor(COLOR_BTN_TEXT[1], COLOR_BTN_TEXT[2], COLOR_BTN_TEXT[3])
-  lg.print("[R]  Restart", px + 8, py + 5)
-  py = py + 34
+  lg.rectangle("line", barX, barY, barW, barH, 5, 5)
+  -- Star badge at bar right end
+  local sCX = barX + barW + 14
+  local sCY = barY + barH * 0.5
+  lg.setColor(COLOR_MULT_GOLD[1], COLOR_MULT_GOLD[2], COLOR_MULT_GOLD[3])
+  lg.circle("fill", sCX, sCY, 9)
+  lg.setColor(0.18, 0.10, 0.02)
+  lg.setLineWidth(1.5)
+  lg.circle("line", sCX, sCY, 9)
+  -- Chain multiplier (large; bounces on increase)
+  local mScale = 1.0
+  if self.multBounce > 0 then
+    local t = self.multBounce / 0.28
+    mScale = 1 + 0.32 * t * t   -- quadratic ease-out, max 1.32x
+  end
+  local multStr = "x" .. self.multiplier
+  local mcol    = self.multiplier > 1 and COLOR_MULT_GOLD or COLOR_CARD_LABEL
+  local mCX     = cx + cw * 0.5
+  local mCY     = cy + 135
+  lg.push()
+  lg.translate(mCX, mCY)
+  lg.scale(mScale, mScale)
+  lg.setFont(HUD_FONT_LARGE)
+  local mW  = HUD_FONT_LARGE:getWidth(multStr)
+  local mHt = HUD_FONT_LARGE:getHeight()
+  if self.multiplier > 1 then  -- warm drop shadow when chain is active
+    lg.setColor(0.52, 0.32, 0.04, 0.28)
+    lg.print(multStr, -mW * 0.5 + 2, -mHt * 0.5 + 2)
+  end
+  lg.setColor(mcol[1], mcol[2], mcol[3])
+  lg.print(multStr, -mW * 0.5, -mHt * 0.5)
+  lg.pop()
+  -- "CHAIN" sub-label below multiplier
+  lg.setFont(HUD_FONT_SMALL)
+  lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3])
+  lg.printf("CHAIN", cx, cy + 160, cw, "center")
+  cy = cy + c2h + pm
 
-  -- Debug toggle button
-  local dbgCol = self.debugRegions and COLOR_DEBUG_ON or COLOR_BTN_TEXT
-  lg.setColor(COLOR_BTN[1], COLOR_BTN[2], COLOR_BTN[3])
-  lg.rectangle("fill", px, py, pw, 26, 4, 4)
-  lg.setColor(COLOR_BTN_BORDER[1], COLOR_BTN_BORDER[2], COLOR_BTN_BORDER[3])
-  lg.setLineWidth(1)
-  lg.rectangle("line", px, py, pw, 26, 4, 4)
-  lg.setColor(dbgCol[1], dbgCol[2], dbgCol[3])
-  lg.print("[G]  Debug", px + 8, py + 5)
+  -- ── Card 3: Active Cards (fills remaining panel height) ──────────────
+  local c3h = max(60, L.H - cy - pm)
+  lg.setColor(COLOR_CARD_BG[1], COLOR_CARD_BG[2], COLOR_CARD_BG[3])
+  lg.rectangle("fill", cx, cy, cw, c3h, 6, 6)
+  lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3])
+  lg.setLineWidth(2)
+  lg.rectangle("line", cx, cy, cw, c3h, 6, 6)
+  lg.setFont(HUD_FONT_SMALL)
+  lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3])
+  lg.print("ACTIVE CARDS", cx + 10, cy + 10)
+  -- Empty state placeholder
+  lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3], 0.38)
+  lg.printf("NO CARDS YET", cx, cy + floor(c3h * 0.42), cw, "center")
+
+  -- Restore default font before board rendering.
+  lg.setFont(HUD_FONT_DEFAULT)
 
   -- Thick dark border frame (drawn first; board surface sits inset inside it).
   lg.setColor(COLOR_BORDER[1], COLOR_BORDER[2], COLOR_BORDER[3])
@@ -936,17 +981,8 @@ end
 
 function Game:mousepressed(x, y, button)
   if button ~= 1 then return end
-  -- Panel tool switcher clicks (checked before the board flip gate).
-  if x < L.panelW and self._toolBtnY then
-    if y >= self._toolBtnY and y <= self._toolBtnY + 38 then
-      local bpx = L.panelX + 18
-      local bpw = L.panelW - 36
-      local mid = bpx + (bpw - 8) / 2
-      self.toolType = (x < mid) and TOOL_CIRCLE or TOOL_TRIANGLE
-      self:_refreshHover()
-      return
-    end
-  end
+  -- Panel clicks don't fire flips (tool toggle is keyboard [T]).
+  if x < L.panelW then return end
   if self.activeCoin then return end                 -- one flip at a time
   -- Re-sample so the click decision uses the freshest cursor position.
   self.toolX, self.toolY = x, y
