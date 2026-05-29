@@ -495,38 +495,29 @@ local function drawHoverDebug(coin, item, dotX, dotY)
   local region = coin:regionAt(offX, offY, item)
   if not region then return end
   local angle = region.angle
-  local power, arc = resolveShot(item, offDist)
+  local power = resolveShot(item, offDist)
   if region.power then power = region.power end
-  if region.arc   then arc   = region.arc   end
-  -- Contact point on the coin's surface (post-clamp).
-  local contactX = coin.x + offX * coin.radius
-  local contactY = coin.y + offY * coin.radius
-  lg.setColor(1, 1, 0, 1)
-  lg.circle("fill", contactX, contactY, 4)
-  -- Trajectory: single connected black arc showing height and distance.
+  -- Landing position: flat on the board, no upward curve.
   local endX = coin.x + cos(angle) * power
   local endY = coin.y + sin(angle) * power
-  local N = 24
-  local pts = {}
-  for i = 0, N do
-    local t  = i / N
-    pts[#pts + 1] = coin.x + (endX - coin.x) * t
-    pts[#pts + 1] = coin.y + (endY - coin.y) * t - sin(t * pi) * arc
+  local dx   = endX - coin.x
+  local dy   = endY - coin.y
+  local dist = math.sqrt(dx * dx + dy * dy)
+  -- Dotted straight line from coin center to landing spot.
+  -- Dots every ~22px; final dot larger to mark the landing.
+  local DOT_R    = 6
+  local DOT_GAP  = 22
+  local DOT_COL  = { 1, 0.08, 0.58 }  -- hot pink, fully opaque
+  lg.setColor(DOT_COL[1], DOT_COL[2], DOT_COL[3], 1)
+  if dist > 0 then
+    local steps = math.max(1, math.floor(dist / DOT_GAP))
+    for i = 1, steps - 1 do
+      local t = i / steps
+      lg.circle("fill", coin.x + dx * t, coin.y + dy * t, DOT_R)
+    end
   end
-  lg.setColor(0, 0, 0, 0.80)
-  lg.setLineWidth(2)
-  lg.line(pts)
-  -- Arrowhead: two lines angled back from the landing point.
-  local dx = pts[#pts-1] - pts[#pts-3]
-  local dy = pts[#pts]   - pts[#pts-2]
-  local len = math.sqrt(dx*dx + dy*dy)
-  if len > 0 then
-    dx, dy = dx / len, dy / len
-    local hLen, hSpread = 10, 5
-    local lx = endX - dx * hLen;  local ly = endY - dy * hLen
-    lg.line(endX, endY, lx - dy * hSpread, ly + dx * hSpread)
-    lg.line(endX, endY, lx + dy * hSpread, ly - dx * hSpread)
-  end
+  -- Landing dot — slightly larger.
+  lg.circle("fill", endX, endY, DOT_R + 3)
   lg.setColor(1, 1, 1, 1)
 end
 
