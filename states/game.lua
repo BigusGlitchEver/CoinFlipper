@@ -617,9 +617,11 @@ fireFlip = function(self, coin, contactX, contactY, depth)
   coin:launch(angle, power, arc, item, function(lx, ly)
     local zone, _ = resolveFlip(self, coin, lx, ly)
     if zone == "red" or zone == "yellow" or zone == "blue" then
-      coin.used = true  -- scoring zones retire the coin
+      coin.used = true   -- scoring zone: retire from player interaction
+    elseif zone == "white_miss" then
+      coin.used = false  -- knocked back to white zone: player can flip again
     end
-    -- white_miss / off_board_miss: coin stays live and can be flipped again.
+    -- off_board_miss: coin.used unchanged (preserves prior state).
     -- Tier mutation on misses is handled inside resolveFlip.
     -- Chain reaction: bumps the depth. At depth 3 we still LAND and resolve
     -- normally, but we do NOT trigger a 4th-hop chain.
