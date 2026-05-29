@@ -139,6 +139,8 @@ local COLOR_TARGET_OUTLINE = { 0x33/255, 0x33/255, 0x33/255 }
 local COLOR_TOOL           = { 0x9A/255, 0xA0/255, 0xA6/255 }
 local COLOR_TOOL_OUTLINE   = { 0x33/255, 0x33/255, 0x33/255 }
 local COLOR_HIGHLIGHT      = { 0.20, 0.95, 1.00 }   -- cyan "armed" ring
+local COLOR_TOOL_HL        = { 1.00, 0.88, 0.30 }   -- lit leading-edge segment
+local TOOL_BORDER_WIDTH    = 4                       -- chip border thickness
 local COLOR_TEXT           = { 0.10, 0.10, 0.10 }
 local COLOR_TEXT_DIM       = { 0.40, 0.40, 0.40 }
 local COLOR_PANEL          = { 0x22/255, 0x22/255, 0x22/255 }  -- left panel bg
@@ -292,10 +294,10 @@ end
 
 -- ---------- Flip tool (round, follows the cursor) ----------
 
--- Triangle tool: pure-primitive grey body + dark edge outline. The 3 edges
--- ARE the contact surface. selected=true adds a cyan highlight ring; the 3
--- tips carry colored contact dots (amber / teal / violet).
-local function drawTriangleToolAt(x, y, selected)
+-- Triangle tool: translucent grey body + thick dark edge border. The 3 edges
+-- ARE the contact surface. No dots, no outer ring; the leading-edge highlight
+-- (drawn separately) lights up whichever edge faces the coin.
+local function drawTriangleToolAt(x, y)
   local r   = L.toolR
   local v1x = x + TRI_UX[1] * r;  local v1y = y + TRI_UY[1] * r
   local v2x = x + TRI_UX[2] * r;  local v2y = y + TRI_UY[2] * r
@@ -303,58 +305,68 @@ local function drawTriangleToolAt(x, y, selected)
   -- Translucent grey body.
   lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.30)
   lg.polygon("fill", v1x, v1y, v2x, v2y, v3x, v3y)
-  -- Dark edge outline.
-  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.75)
-  lg.setLineWidth(2)
+  -- Thick dark edge border.
+  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.85)
+  lg.setLineWidth(TOOL_BORDER_WIDTH)
   lg.polygon("line", v1x, v1y, v2x, v2y, v3x, v3y)
-  -- Cyan highlight ring when this tool is active.
-  if selected then
-    lg.setColor(COLOR_HIGHLIGHT[1], COLOR_HIGHLIGHT[2], COLOR_HIGHLIGHT[3], 0.85)
-    lg.setLineWidth(3)
-    lg.circle("line", x, y, r + 6)
-  end
-  -- Colored contact dots at the 3 tip positions.
-  for i = 1, 3 do
-    local col = TRI_COLORS[i]
-    lg.setColor(col[1], col[2], col[3], 1)
-    lg.circle("fill", x + TRI_UX[i] * r, y + TRI_UY[i] * r, 6)
-  end
   lg.setColor(1, 1, 1, 1)
 end
 
--- Circle tool: pure-primitive translucent disc + dark rim ring + the 6
--- Simon-Says colored arc panels. The rim IS the contact surface.
--- selected=true adds a cyan highlight ring; the 6 contact dots mark the
--- measured rim positions (panel centers).
-local function drawToolAt(x, y, selected)
+-- Circle tool: translucent disc + thick dark rim border. The rim IS the
+-- contact surface. No panels, no dots, no outer ring; the leading-edge
+-- highlight (drawn separately) lights up the rim arc facing the coin.
+local function drawToolAt(x, y)
   local toolR = L.toolR
   -- Translucent grey disc.
   lg.setColor(COLOR_TOOL[1], COLOR_TOOL[2], COLOR_TOOL[3], 0.30)
   lg.circle("fill", x, y, toolR)
-  -- Dark rim ring.
-  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.75)
-  lg.setLineWidth(2)
+  -- Thick dark rim border.
+  lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.85)
+  lg.setLineWidth(TOOL_BORDER_WIDTH)
   lg.circle("line", x, y, toolR)
-  -- Simon-Says colored arc panels, one per contact mark.
-  local sliverR = toolR - 5
-  lg.setLineWidth(SLIVER_LINE_WIDTH)
-  for d = 1, 6 do
-    local cAng = DOT_ANGLES_RAD[d]
-    local col  = DOT_COLORS[d]
-    lg.setColor(col[1], col[2], col[3], 1)
-    lg.arc("line", "open", x, y, sliverR, cAng - SLIVER_HALF_WIDTH, cAng + SLIVER_HALF_WIDTH)
-  end
-  -- Cyan highlight ring when this tool is active.
-  if selected then
-    lg.setColor(COLOR_HIGHLIGHT[1], COLOR_HIGHLIGHT[2], COLOR_HIGHLIGHT[3], 0.85)
-    lg.setLineWidth(3)
-    lg.circle("line", x, y, toolR + 6)
-  end
-  -- Colored contact dots at the 6 measured rim positions.
-  for d = 1, 6 do
-    local col = DOT_COLORS[d]
-    lg.setColor(col[1], col[2], col[3], 1)
-    lg.circle("fill", x + DOT_UX[d] * toolR, y + DOT_UY[d] * toolR, 6)
+  lg.setColor(1, 1, 1, 1)
+end
+
+-- Closest squared distance from point (px,py) to segment (ax,ay)-(bx,by).
+local function segDist2(px, py, ax, ay, bx, by)
+  local ex, ey = bx - ax, by - ay
+  local len2   = ex * ex + ey * ey
+  local t      = (len2 > 0) and (((px - ax) * ex + (py - ay) * ey) / len2) or 0
+  if t < 0 then t = 0 elseif t > 1 then t = 1 end
+  local cx, cy = ax + t * ex, ay + t * ey
+  local dx, dy = px - cx, py - cy
+  return dx * dx + dy * dy
+end
+
+-- Leading-edge highlight: when the chip overlaps a coin, light up the segment
+-- of the chip's OWN thick border that faces the coin -- the border itself
+-- brightens, like Simon Says lighting one segment. The lit segment tracks the
+-- coin's direction continuously. No effect when nothing is in contact.
+local TOOL_HL_HALF = 32 * pi / 180   -- circle highlight arc half-width
+local function drawLeadingEdge(toolX, toolY, toolType, coin)
+  if not coin then return end
+  lg.setColor(COLOR_TOOL_HL[1], COLOR_TOOL_HL[2], COLOR_TOOL_HL[3], 1)
+  lg.setLineWidth(TOOL_BORDER_WIDTH + 2)
+  if toolType == TOOL_TRIANGLE then
+    -- Light up the whole triangle edge nearest the coin (1 of 3 segments).
+    local r = L.toolR
+    local v1x, v1y = toolX + TRI_UX[1] * r, toolY + TRI_UY[1] * r
+    local v2x, v2y = toolX + TRI_UX[2] * r, toolY + TRI_UY[2] * r
+    local v3x, v3y = toolX + TRI_UX[3] * r, toolY + TRI_UY[3] * r
+    local d12 = segDist2(coin.x, coin.y, v1x, v1y, v2x, v2y)
+    local d23 = segDist2(coin.x, coin.y, v2x, v2y, v3x, v3y)
+    local d31 = segDist2(coin.x, coin.y, v3x, v3y, v1x, v1y)
+    if d12 <= d23 and d12 <= d31 then
+      lg.line(v1x, v1y, v2x, v2y)
+    elseif d23 <= d31 then
+      lg.line(v2x, v2y, v3x, v3y)
+    else
+      lg.line(v3x, v3y, v1x, v1y)
+    end
+  else
+    -- Light up the rim arc facing the coin.
+    local ang = math.atan2(coin.y - toolY, coin.x - toolX)
+    lg.arc("line", "open", toolX, toolY, L.toolR, ang - TOOL_HL_HALF, ang + TOOL_HL_HALF)
   end
   lg.setColor(1, 1, 1, 1)
 end
@@ -946,23 +958,15 @@ function Game:draw()
   -- Highlight the coin the tool will fire against (auto-arm OR selected pair).
   drawHighlightFor(self.hoveredCoin)
 
-  -- Flip tool follows the cursor. Simon-Says wheel: 6 arc panels around the
-  -- rim with dark center marks at the exact contact angles. The armed bar
-  -- gets a white halo; conflict-available bars pulse thicker.
+  -- Flip tool follows the cursor: a plain grey chip with a thick dark border.
   if self.toolType == TOOL_TRIANGLE then
-    drawTriangleToolAt(self.toolX, self.toolY, self.toolType == TOOL_TRIANGLE)
+    drawTriangleToolAt(self.toolX, self.toolY)
   else
-    drawToolAt(self.toolX, self.toolY, self.toolType == TOOL_CIRCLE)
+    drawToolAt(self.toolX, self.toolY)
   end
-  -- Armed contact flash: bright dot exactly where the edge meets the coin.
-  if self.armedDotX then
-    lg.setColor(1, 1, 1, 0.92)
-    lg.circle("fill", self.armedDotX, self.armedDotY, 5)
-    lg.setColor(1, 1, 1, 0.38)
-    lg.setLineWidth(1.5)
-    lg.circle("line", self.armedDotX, self.armedDotY, 5)
-    lg.setColor(1, 1, 1, 1)
-  end
+  -- Leading-edge highlight: the chip's own border segment facing the armed
+  -- coin lights up (Simon-Says style). Only when a coin is in contact.
+  drawLeadingEdge(self.toolX, self.toolY, self.toolType, self.hoveredCoin)
 
   -- Region debug overlay (press 'd' to toggle). On top of everything.
   if self.debugRegions then
