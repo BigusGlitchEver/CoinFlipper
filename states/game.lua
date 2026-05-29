@@ -3,12 +3,12 @@
 --
 -- Portrait layout, light grey background, board rectangle filling
 -- everything below a top HUD strip. The ENTIRE board is the scoring space:
--- four corner reward zones (3 pts each) sit on a center region (1 pt).
--- Multiple coins scattered on the board at floor start; tap one to flip it.
--- Only one coin flies at a time.
---
--- Scoring: landing in a corner = 3 pts; landing anywhere else on-board = 1 pt;
--- landing off-board = miss + chain reset. Every on-board landing scores.
+-- four concentric-rectangle scoring zones:
+--   white (outer strip) = 0 pts, coin stays live and can be flipped again
+--   blue  (next band)   = 1 pt
+--   yellow (inner band) = 2 pts
+--   red   (centre rect) = 3 pts
+-- Landing off-board resets the chain. White is a survivable no-score.
 --
 -- NO JUICE in this chunk: no score popups, no ring flash, no screen shake,
 -- no multiplier bounce, no between-floor shrink. Those land in Chunk 4.
@@ -130,9 +130,10 @@ local Game = {}
 local COLOR_BG             = { 0xEE/255, 0xEE/255, 0xEE/255 }
 local COLOR_BOARD          = { 1, 1, 1 }
 local COLOR_BOARD_BORDER   = { 0xAA/255, 0xAA/255, 0xAA/255 }
-local COLOR_ZONE_CENTER    = { 0.93, 0.97, 0.89 }  -- light sage: center region (1 pt)
-local COLOR_ZONE_CORNER    = { 1.00, 0.83, 0.35 }  -- warm amber: corner zones (3 pts)
-local COLOR_ZONE_BORDER    = { 0.68, 0.62, 0.48 }  -- muted tan: corner outlines
+local COLOR_ZONE_BLUE      = { 0.25, 0.50, 0.85 }  -- blue band:   1 pt
+local COLOR_ZONE_YELLOW    = { 0.96, 0.80, 0.10 }  -- yellow band: 2 pts
+local COLOR_ZONE_RED       = { 0.85, 0.18, 0.14 }  -- red centre:  3 pts
+local COLOR_ZONE_BORDER    = { 0.15, 0.15, 0.15 }  -- dark outlines between zones
 local COLOR_TOOL           = { 0x9A/255, 0xA0/255, 0xA6/255 }
 local COLOR_TOOL_OUTLINE   = { 0x33/255, 0x33/255, 0x33/255 }
 local COLOR_HIGHLIGHT      = { 0.20, 0.95, 1.00 }   -- cyan "armed" ring
@@ -161,7 +162,7 @@ local FLOOR_THRESHOLDS = { [1] = 20, [2] = 60, [3] = 120 }
 local NUM_FLOORS        = 3
 
 -- Tight per Balatro lesson; the big numbers come from the multiplier chain.
-local POINTS = { corner = 3, center = 1 }  -- corner zones beat center
+local POINTS = { red = 3, yellow = 2, blue = 1 }  -- zone point values
 
 local PANEL_W   = 220   -- left score panel width
 local BORDER_T  = 10    -- board border thickness (pixels each side)
@@ -191,9 +192,12 @@ local function rebuildLayout()
   L.boardW = L.borderW - BORDER_T * 2
   L.boardH = L.borderH - BORDER_T * 2
 
-  -- Corner zone size: ~20% of the shorter board dimension on each side.
-  -- Area of all 4 corners together ≈ 11-13% of total board area.
-  L.cornerSize = floor(math.min(L.boardW, L.boardH) * 0.20)
+  -- Concentric-rect zone insets (px from each board edge).
+  -- White outer strip → Blue band → Yellow band → Red centre.
+  local s  = math.min(L.boardW, L.boardH)
+  L.zone1  = floor(s * 0.08)   -- white → blue  boundary
+  L.zone2  = floor(s * 0.20)   -- blue  → yellow boundary
+  L.zone3  = floor(s * 0.34)   -- yellow → red  boundary
 
   -- Coin size: use the spec value (48px diameter) directly. Coins are
   -- intentionally larger than the zone marks -- tappable, not aim-able.
@@ -497,45 +501,58 @@ end
 
 -- ---------- Flip resolution ----------
 
--- Landing resolution for Grandma's House board: the ENTIRE board scores.
--- Corners (4 rectangular zones) award POINTS.corner; everywhere else on-
--- board awards POINTS.center. Only an off-board landing resets the chain.
--- Tier multiplier is applied to every scoring hit (not just misses).
+-- Grandma's House 4-zone landing resolution. Concentric rectangles tested
+-- innermost-first so the highest zone always wins:
+--   off-board    → miss + chain reset  (coin not retired)
+--   white strip  → 0 pts, no chain change (coin NOT retired, can flip again)
+--   blue band    → 1 pt, feeds multiplier
+--   yellow band  → 2 pts, feeds multiplier
+--   red centre   → 3 pts, feeds multiplier
 local function resolveFlip(self, coin, landingX, landingY)
-  local bx, by  = L.boardX, L.boardY
-  local bw, bh  = L.boardW, L.boardH
-  local cz      = L.cornerSize
+  local bx, by   = L.boardX, L.boardY
+  local bw, bh   = L.boardW, L.boardH
+  local z1, z2, z3 = L.zone1, L.zone2, L.zone3
   local tierMult = Tiers[(coin.tier or 0) + 1].mult
 
-  -- Off-board first: full miss, chain resets, coin degrades.
-  local onBoard =
-    landingX >= bx and landingX <= bx + bw and
-    landingY >= by and landingY <= by + bh
-  if not onBoard then
+  -- Off-board: full miss, chain resets.
+  if landingX < bx or landingX > bx + bw or
+     landingY < by or landingY > by + bh then
     if coin.tier < 3 then coin.tier = coin.tier + 1 end
     self.multiplier = 1
     return "off_board_miss", 0
   end
 
-  -- Corner zone test (point-in-rect for each of the 4 corners).
-  local inCorner =
-    (landingX <= bx + cz      and landingY <= by + cz     ) or  -- top-left
-    (landingX >= bx + bw - cz and landingY <= by + cz     ) or  -- top-right
-    (landingX <= bx + cz      and landingY >= by + bh - cz) or  -- bottom-left
-    (landingX >= bx + bw - cz and landingY >= by + bh - cz)     -- bottom-right
-
-  if inCorner then
-    local gain = max(1, floor(POINTS.corner * tierMult * self.multiplier))
+  -- Red centre (innermost).
+  if landingX >= bx + z3 and landingX <= bx + bw - z3 and
+     landingY >= by + z3 and landingY <= by + bh - z3 then
+    local gain = max(1, floor(POINTS.red * tierMult * self.multiplier))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
-    return "corner", gain
-  else
-    -- Center region: everything else on-board (1 pt, still feeds the chain).
-    local gain = max(1, floor(POINTS.center * tierMult * self.multiplier))
-    self.marbles    = self.marbles + gain
-    self.multiplier = self.multiplier + 1
-    return "center", gain
+    return "red", gain
   end
+
+  -- Yellow band.
+  if landingX >= bx + z2 and landingX <= bx + bw - z2 and
+     landingY >= by + z2 and landingY <= by + bh - z2 then
+    local gain = max(1, floor(POINTS.yellow * tierMult * self.multiplier))
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "yellow", gain
+  end
+
+  -- Blue band.
+  if landingX >= bx + z1 and landingX <= bx + bw - z1 and
+     landingY >= by + z1 and landingY <= by + bh - z1 then
+    local gain = max(1, floor(POINTS.blue * tierMult * self.multiplier))
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "blue", gain
+  end
+
+  -- White outer strip: on-board but no score. Coin stays live, can be
+  -- flipped again. Degrades tier to make the coin harder over time.
+  if coin.tier < 3 then coin.tier = coin.tier + 1 end
+  return "white_miss", 0
 end
 
 -- Shared launch path: used by the player click AND by chain reactions.
@@ -563,9 +580,10 @@ fireFlip = function(self, coin, contactX, contactY, depth)
   if depth == 0 then self.activeCoin = coin end
   coin:launch(angle, power, arc, item, function(lx, ly)
     local zone, _ = resolveFlip(self, coin, lx, ly)
-    if zone == "corner" or zone == "center" then
-      coin.used = true  -- every on-board landing retires the coin
+    if zone == "red" or zone == "yellow" or zone == "blue" then
+      coin.used = true  -- scoring zones retire the coin
     end
+    -- white_miss / off_board_miss: coin stays live and can be flipped again.
     -- Tier mutation on misses is handled inside resolveFlip.
     -- Chain reaction: bumps the depth. At depth 3 we still LAND and resolve
     -- normally, but we do NOT trigger a 4th-hop chain.
@@ -865,22 +883,23 @@ function Game:draw()
   lg.setColor(COLOR_BOARD)
   lg.rectangle("fill", L.boardX, L.boardY, L.boardW, L.boardH)
 
-  -- Board scoring zones: center region (1 pt) fills the board first;
-  -- 4 corner reward zones (3 pts each) sit on top. No circular target.
-  lg.setColor(COLOR_ZONE_CENTER)
-  lg.rectangle("fill", L.boardX, L.boardY, L.boardW, L.boardH)
-  local cz = L.cornerSize
-  lg.setColor(COLOR_ZONE_CORNER)
-  lg.rectangle("fill", L.boardX,                 L.boardY,                 cz, cz)  -- TL
-  lg.rectangle("fill", L.boardX + L.boardW - cz, L.boardY,                 cz, cz)  -- TR
-  lg.rectangle("fill", L.boardX,                 L.boardY + L.boardH - cz, cz, cz)  -- BL
-  lg.rectangle("fill", L.boardX + L.boardW - cz, L.boardY + L.boardH - cz, cz, cz)  -- BR
+  -- Board scoring zones: concentric rectangles layered outermost → innermost.
+  -- White board surface (drawn above) is the outer no-score strip.
+  -- Blue (1 pt) → Yellow (2 pts) → Red centre (3 pts) sit on top.
+  local bx, by = L.boardX, L.boardY
+  local bw, bh = L.boardW, L.boardH
+  local z1, z2, z3 = L.zone1, L.zone2, L.zone3
+  lg.setColor(COLOR_ZONE_BLUE)
+  lg.rectangle("fill", bx + z1, by + z1, bw - z1*2, bh - z1*2)
+  lg.setColor(COLOR_ZONE_YELLOW)
+  lg.rectangle("fill", bx + z2, by + z2, bw - z2*2, bh - z2*2)
+  lg.setColor(COLOR_ZONE_RED)
+  lg.rectangle("fill", bx + z3, by + z3, bw - z3*2, bh - z3*2)
   lg.setColor(COLOR_ZONE_BORDER)
   lg.setLineWidth(2)
-  lg.rectangle("line", L.boardX,                 L.boardY,                 cz, cz)
-  lg.rectangle("line", L.boardX + L.boardW - cz, L.boardY,                 cz, cz)
-  lg.rectangle("line", L.boardX,                 L.boardY + L.boardH - cz, cz, cz)
-  lg.rectangle("line", L.boardX + L.boardW - cz, L.boardY + L.boardH - cz, cz, cz)
+  lg.rectangle("line", bx + z1, by + z1, bw - z1*2, bh - z1*2)
+  lg.rectangle("line", bx + z2, by + z2, bw - z2*2, bh - z2*2)
+  lg.rectangle("line", bx + z3, by + z3, bw - z3*2, bh - z3*2)
 
   -- Coins.
   for i = 1, #self.coins do self.coins[i]:draw() end
