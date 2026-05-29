@@ -114,6 +114,7 @@ M.PANEL_W             = 220  -- left score panel width
 M.BORDER_T            = 10   -- board border thickness (pixels each side)
 M.MARGIN              = 12   -- gap between screen edge/panel and border outer edge
 M.PREVIEW_BTN_H       = 34   -- height of the preview-toggle button in the sidebar
+M.CHAIN_SPAWN_MAX_DEPTH = 5  -- chain reactions cap at this depth (spawn + chain stop)
 M.TOOL_HL_HALF        = 32 * pi / 180   -- circle highlight arc half-width
 
 return M

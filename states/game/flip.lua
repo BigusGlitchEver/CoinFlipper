@@ -16,10 +16,11 @@ local pi    = math.pi
 local huge  = math.huge
 local floor = math.floor
 
-local TRI_UX      = C.TRI_UX
-local TRI_UY      = C.TRI_UY
-local POINTS      = C.POINTS
-local CHAIN_BONUS = C.CHAIN_BONUS
+local TRI_UX             = C.TRI_UX
+local TRI_UY             = C.TRI_UY
+local POINTS             = C.POINTS
+local CHAIN_BONUS        = C.CHAIN_BONUS
+local CHAIN_SPAWN_MAX_DEPTH = C.CHAIN_SPAWN_MAX_DEPTH
 
 local M = {}
 
@@ -209,14 +210,17 @@ fireFlip = function(self, coin, contactX, contactY, depth)
     end
 
     -- Spawn extra coins at the landing point for chain-activated flips.
-    -- depth > 0 means this coin was knocked by another; spawn `depth` extras.
-    -- depth == 0 is the player's own flip — no spawn.
+    -- depth 1 → 1 extra, depth 2 → 2, ... depth CHAIN_SPAWN_MAX_DEPTH → N extras.
+    -- depth 0 is the player's own flip; skip spawn for that.
     if depth > 0 then
       Spawn.spawnCoinsAt(self, lx, ly, depth, coin.tier or 0)
     end
 
-    -- Chain reaction: no depth cap — let the board get overloaded.
-    tryChainFlip(self, coin, lx, ly, depth + 1)
+    -- Chain reaction: stop triggering new chains at the cap depth so the
+    -- board multiplies up to but not beyond CHAIN_SPAWN_MAX_DEPTH contacts.
+    if depth < CHAIN_SPAWN_MAX_DEPTH then
+      tryChainFlip(self, coin, lx, ly, depth + 1)
+    end
     if depth == 0 then self.activeCoin = nil end
   end, L.boardX, L.boardY, L.boardW, L.boardH)
 end
