@@ -332,7 +332,8 @@ function Coin:draw()
     sx = 1
   end
 
-  local alpha = self.used and 0.30 or 1.0
+  -- Full opacity while airborne; faded only when resting and scored.
+  local alpha = (self.used and not self.flipping) and 0.30 or 1.0
   local fill  = Tiers[(self.tier or 0) + 1].color
 
   ensureSprites()
