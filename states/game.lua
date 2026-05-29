@@ -327,45 +327,31 @@ local function drawToolAt(x, y)
   lg.setColor(1, 1, 1, 1)
 end
 
--- Closest squared distance from point (px,py) to segment (ax,ay)-(bx,by).
-local function segDist2(px, py, ax, ay, bx, by)
-  local ex, ey = bx - ax, by - ay
-  local len2   = ex * ex + ey * ey
-  local t      = (len2 > 0) and (((px - ax) * ex + (py - ay) * ey) / len2) or 0
-  if t < 0 then t = 0 elseif t > 1 then t = 1 end
-  local cx, cy = ax + t * ex, ay + t * ey
-  local dx, dy = px - cx, py - cy
-  return dx * dx + dy * dy
-end
-
--- Leading-edge highlight: when the chip overlaps a coin, light up the segment
--- of the chip's OWN thick border that faces the coin -- the border itself
--- brightens, like Simon Says lighting one segment. The lit segment tracks the
--- coin's direction continuously. No effect when nothing is in contact.
+-- Leading-edge highlight: when the chip overlaps a coin, light up the part of
+-- the chip facing the coin. Circle lights a rim arc; triangle lights ONLY the
+-- single tip nearest the coin (its sides never light up). The lit part tracks
+-- the coin continuously. No effect when nothing is in contact.
 local TOOL_HL_HALF = 32 * pi / 180   -- circle highlight arc half-width
 local function drawLeadingEdge(toolX, toolY, toolType, coin)
   if not coin then return end
   lg.setColor(COLOR_TOOL_HL[1], COLOR_TOOL_HL[2], COLOR_TOOL_HL[3], 1)
-  lg.setLineWidth(TOOL_BORDER_WIDTH + 2)
   if toolType == TOOL_TRIANGLE then
-    -- Light up the whole triangle edge nearest the coin (1 of 3 segments).
+    -- Light up only the TIP nearest the coin (1 of the 3 vertices), as a dot.
     local r = L.toolR
-    local v1x, v1y = toolX + TRI_UX[1] * r, toolY + TRI_UY[1] * r
-    local v2x, v2y = toolX + TRI_UX[2] * r, toolY + TRI_UY[2] * r
-    local v3x, v3y = toolX + TRI_UX[3] * r, toolY + TRI_UY[3] * r
-    local d12 = segDist2(coin.x, coin.y, v1x, v1y, v2x, v2y)
-    local d23 = segDist2(coin.x, coin.y, v2x, v2y, v3x, v3y)
-    local d31 = segDist2(coin.x, coin.y, v3x, v3y, v1x, v1y)
-    if d12 <= d23 and d12 <= d31 then
-      lg.line(v1x, v1y, v2x, v2y)
-    elseif d23 <= d31 then
-      lg.line(v2x, v2y, v3x, v3y)
-    else
-      lg.line(v3x, v3y, v1x, v1y)
+    local bestI, bestD2 = 1, huge
+    for i = 1, 3 do
+      local tx = toolX + TRI_UX[i] * r
+      local ty = toolY + TRI_UY[i] * r
+      local dx = coin.x - tx
+      local dy = coin.y - ty
+      local d2 = dx * dx + dy * dy
+      if d2 < bestD2 then bestD2 = d2; bestI = i end
     end
+    lg.circle("fill", toolX + TRI_UX[bestI] * r, toolY + TRI_UY[bestI] * r, TOOL_BORDER_WIDTH + 3)
   else
     -- Light up the rim arc facing the coin.
     local ang = math.atan2(coin.y - toolY, coin.x - toolX)
+    lg.setLineWidth(TOOL_BORDER_WIDTH + 2)
     lg.arc("line", "open", toolX, toolY, L.toolR, ang - TOOL_HL_HALF, ang + TOOL_HL_HALF)
   end
   lg.setColor(1, 1, 1, 1)
@@ -471,60 +457,33 @@ end
 local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriangle)
   local count = 0
   if isTriangle then
-    -- Triangle: for each coin, find the closest point on any of the 3 edges.
-    -- Contact when that distance < coin.radius. Deduplication is natural
-    -- because we loop coins in the outer loop.
-    local v1x = toolX + TRI_UX[1] * toolR;  local v1y = toolY + TRI_UY[1] * toolR
-    local v2x = toolX + TRI_UX[2] * toolR;  local v2y = toolY + TRI_UY[2] * toolR
-    local v3x = toolX + TRI_UX[3] * toolR;  local v3y = toolY + TRI_UY[3] * toolR
-    for i = 1, #coins do
-      local coin = coins[i]
-      if not coin.flipping and not coin.used then
-        local cr = coin.radius
-        local cx = coin.x;  local cy = coin.y
-        local bestDist = huge
-        local bestPX, bestPY = 0, 0
-        -- Edge v1->v2
-        do
-          local ex = v2x-v1x;  local ey = v2y-v1y
-          local len2 = ex*ex + ey*ey
-          local t = ((cx-v1x)*ex + (cy-v1y)*ey) / len2
-          if t < 0 then t = 0 elseif t > 1 then t = 1 end
-          local px = v1x+t*ex;  local py = v1y+t*ey
-          local ddx = cx-px;    local ddy = cy-py
-          local d = sqrt(ddx*ddx + ddy*ddy)
-          if d < cr and d < bestDist then bestDist=d; bestPX=px; bestPY=py end
+    -- Triangle: only the 3 TIPS are contact points -- the sides never touch.
+    -- A tip activates a coin when the tip point lies inside the coin's disc.
+    -- Each tip claims the nearest live coin it is inside (one pair per tip).
+    for d = 1, 3 do
+      local tx = toolX + TRI_UX[d] * toolR
+      local ty = toolY + TRI_UY[d] * toolR
+      local bestCoin, bestD2 = nil, huge
+      for i = 1, #coins do
+        local coin = coins[i]
+        if not coin.flipping and not coin.used then
+          local dx = tx - coin.x
+          local dy = ty - coin.y
+          local d2 = dx*dx + dy*dy
+          local cr = coin.radius
+          if d2 < cr*cr and d2 < bestD2 then
+            bestCoin = coin
+            bestD2   = d2
+          end
         end
-        -- Edge v2->v3
-        do
-          local ex = v3x-v2x;  local ey = v3y-v2y
-          local len2 = ex*ex + ey*ey
-          local t = ((cx-v2x)*ex + (cy-v2y)*ey) / len2
-          if t < 0 then t = 0 elseif t > 1 then t = 1 end
-          local px = v2x+t*ex;  local py = v2y+t*ey
-          local ddx = cx-px;    local ddy = cy-py
-          local d = sqrt(ddx*ddx + ddy*ddy)
-          if d < cr and d < bestDist then bestDist=d; bestPX=px; bestPY=py end
-        end
-        -- Edge v3->v1
-        do
-          local ex = v1x-v3x;  local ey = v1y-v3y
-          local len2 = ex*ex + ey*ey
-          local t = ((cx-v3x)*ex + (cy-v3y)*ey) / len2
-          if t < 0 then t = 0 elseif t > 1 then t = 1 end
-          local px = v3x+t*ex;  local py = v3y+t*ey
-          local ddx = cx-px;    local ddy = cy-py
-          local d = sqrt(ddx*ddx + ddy*ddy)
-          if d < cr and d < bestDist then bestDist=d; bestPX=px; bestPY=py end
-        end
-        if bestDist < cr then
-          count = count + 1
-          local slot = outConflict[count]
-          slot.contactX = bestPX
-          slot.contactY = bestPY
-          slot.coin     = coin
-          if count == 6 then break end
-        end
+      end
+      if bestCoin then
+        count = count + 1
+        local slot = outConflict[count]
+        slot.contactX = tx
+        slot.contactY = ty
+        slot.coin     = bestCoin
+        if count == 6 then break end
       end
     end
   else
