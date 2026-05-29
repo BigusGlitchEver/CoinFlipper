@@ -315,7 +315,7 @@ function Coin:draw()
   local alpha = self.used and 0.30 or 1.0
   local fill  = Tiers[(self.tier or 0) + 1].color
 
-  -- Motion trail: 4 ghost circles behind the coin during flight.
+  -- Motion trail: 4 after-images of the WHOLE coin behind it during flight.
   -- Alpha ramps from 0.25 (g=1, closest) down to ~0.05 (g=4, farthest).
   if self.flipping then
     local t_now = self.flipTime / self.flightDuration
@@ -342,9 +342,17 @@ function Coin:draw()
           gy = self.startY + (self.targetY - self.startY) * tg
           gz = sin(tg * pi) * self.arcHeight
         end
-        local ga = 0.25 - (g - 1) * (0.20 / 3)
+        -- After-image of the WHOLE coin: same squashed body + outline as the
+        -- live coin, just faded. Each ghost uses its own tumble phase so the
+        -- trail reads as the coin itself echoing behind, not plain dots.
+        local gtumble = abs(sin(tg * self.flightDuration * TUMBLE_RATE))
+        local gsx     = gtumble * 0.5 + 0.5
+        local ga      = 0.25 - (g - 1) * (0.20 / 3)
         lg.setColor(fill[1], fill[2], fill[3], ga)
-        lg.circle("fill", gx, gy - gz, self.radius * 0.65)
+        lg.ellipse("fill", gx, gy - gz, self.radius * gsx, self.radius)
+        lg.setColor(COLOR_COIN_OUTLINE[1], COLOR_COIN_OUTLINE[2], COLOR_COIN_OUTLINE[3], ga)
+        lg.setLineWidth(2)
+        lg.ellipse("line", gx, gy - gz, self.radius * gsx, self.radius)
       end
     end
   end
