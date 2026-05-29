@@ -192,6 +192,7 @@ local TARGET_BOARD_COINS = 8    -- replenish up to this
 local PANEL_W   = 220   -- left score panel width
 local BORDER_T  = 10    -- board border thickness (pixels each side)
 local MARGIN    = 12    -- gap between screen edge/panel and border outer edge
+local PREVIEW_BTN_H = 34   -- height of the preview-toggle button in the sidebar
 
 -- ---------- Layout (rebuilt on enter / resize) ----------
 
@@ -388,6 +389,9 @@ local function drawTriangleToolAt(x, y)
   lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.85)
   lg.setLineWidth(TOOL_BORDER_WIDTH)
   lg.polygon("line", v1x, v1y, v2x, v2y, v3x, v3y)
+  -- Red center dot: marks the (0,0) origin of the tap-offset math.
+  lg.setColor(1, 0.10, 0.10, 1)
+  lg.circle("fill", x, y, 4)
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -403,6 +407,9 @@ local function drawToolAt(x, y)
   lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.85)
   lg.setLineWidth(TOOL_BORDER_WIDTH)
   lg.circle("line", x, y, toolR)
+  -- Red center dot: marks the (0,0) origin of the tap-offset math.
+  lg.setColor(1, 0.10, 0.10, 1)
+  lg.circle("fill", x, y, 4)
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -827,6 +834,8 @@ function Game:enter(prev, houseName)
   self.bonusFlash = 0
   -- Hide the OS cursor on the flip board -- the grey tool circle IS the
   -- pointer. lm.getPosition() still works while the cursor is hidden.
+  -- Trajectory preview: default on; survive [R] restarts.
+  if self.trajectoryPreview == nil then self.trajectoryPreview = true end
   lm.setVisible(false)
 end
 
@@ -1061,7 +1070,7 @@ function Game:draw()
   cy = cy + cSH + pm
 
   -- ── Card 3: Active Cards (fills remaining panel height) ──────────────
-  local c3h = max(60, L.H - cy - pm)
+  local c3h = max(60, L.H - cy - pm - PREVIEW_BTN_H - pm)
   lg.setColor(COLOR_CARD_BG[1], COLOR_CARD_BG[2], COLOR_CARD_BG[3])
   lg.rectangle("fill", cx, cy, cw, c3h, 6, 6)
   lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3])
@@ -1073,6 +1082,24 @@ function Game:draw()
   -- Empty state placeholder
   lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3], 0.38)
   lg.printf("NO CARDS YET", cx, cy + floor(c3h * 0.42), cw, "center")
+
+  -- Preview toggle button — pinned to the bottom of the sidebar panel.
+  local btnY = L.H - PREVIEW_BTN_H - pm
+  if self.trajectoryPreview then
+    lg.setColor(COLOR_BAR_FILL[1], COLOR_BAR_FILL[2], COLOR_BAR_FILL[3], 0.50)
+  else
+    lg.setColor(COLOR_BAR_BG[1], COLOR_BAR_BG[2], COLOR_BAR_BG[3], 0.60)
+  end
+  lg.rectangle("fill", cx, btnY, cw, PREVIEW_BTN_H, 5, 5)
+  lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3],
+              self.trajectoryPreview and 1.0 or 0.40)
+  lg.setLineWidth(self.trajectoryPreview and 2.5 or 1.5)
+  lg.rectangle("line", cx, btnY, cw, PREVIEW_BTN_H, 5, 5)
+  lg.setFont(HUD_FONT_SMALL)
+  lg.setColor(COLOR_CARD_VALUE[1], COLOR_CARD_VALUE[2], COLOR_CARD_VALUE[3],
+              self.trajectoryPreview and 1.0 or 0.50)
+  lg.printf(self.trajectoryPreview and "PREVIEW  ON" or "PREVIEW  OFF",
+            cx, btnY + floor(PREVIEW_BTN_H * 0.5) - 6, cw, "center")
 
   -- Restore default font before board rendering.
   lg.setFont(HUD_FONT_DEFAULT)
@@ -1113,6 +1140,37 @@ function Game:draw()
 
   -- Coins.
   for i = 1, #self.coins do self.coins[i]:draw() end
+
+  -- Trajectory preview: dotted parabola from the coin to its projected landing.
+  -- Uses the exact same angle, power, and arc height as a real flip would use,
+  -- so the preview is an honest read-only mirror of the actual outcome.
+  if self.trajectoryPreview and self.hoveredCoin
+     and self.armedDotX and not self.activeCoin then
+    local tCoin = self.hoveredCoin
+    local tItem = Items.byId(tCoin.itemType or "coin") or self.activeCoinItem
+    local oX, oY, oDist = tCoin:pressedBy(self.armedDotX, self.armedDotY)
+    if oX then
+      local tReg = tCoin:regionAt(oX, oY, tItem)
+      if tReg then
+        local tAng = tReg.angle
+        local tPow, tArc = resolveShot(tItem, oDist)
+        if tReg.power then tPow = tReg.power end
+        if tReg.arc   then tArc = tReg.arc   end
+        local tlx = tCoin.x + cos(tAng) * tPow
+        local tly = tCoin.y + sin(tAng) * tPow
+        local N = 20
+        for _i = 1, N do
+          local t  = _i / N
+          local px = tCoin.x + (tlx - tCoin.x) * t
+          local py = tCoin.y + (tly - tCoin.y) * t - sin(t * pi) * tArc
+          local fa = (1 - t * 0.65) * 0.52   -- fade toward landing end
+          lg.setColor(1, 1, 1, fa)
+          lg.circle("fill", px, py, 2.5)
+        end
+        lg.setColor(1, 1, 1, 1)
+      end
+    end
+  end
 
   -- Highlight the coin the tool will fire against (auto-arm OR selected pair).
   drawHighlightFor(self.hoveredCoin)
@@ -1167,8 +1225,14 @@ end
 
 function Game:mousepressed(x, y, button)
   if button ~= 1 then return end
-  -- Panel clicks don't fire flips (tool toggle is keyboard [T]).
-  if x < L.panelW then return end
+  -- Panel clicks: handle the preview toggle button; otherwise ignore.
+  if x < L.panelW then
+    local btnY = L.H - PREVIEW_BTN_H - 10   -- 10 = HUD pm constant
+    if y >= btnY and y <= btnY + PREVIEW_BTN_H then
+      self.trajectoryPreview = not self.trajectoryPreview
+    end
+    return
+  end
   if self.activeCoin then return end                 -- one flip at a time
   -- Re-sample so the click decision uses the freshest cursor position.
   self.toolX, self.toolY = x, y
