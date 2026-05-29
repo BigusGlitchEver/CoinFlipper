@@ -439,6 +439,9 @@ local function drawLeadingEdge(toolX, toolY, toolType, coin)
     local ang = math.atan2(coin.y - toolY, coin.x - toolX)
     lg.setLineWidth(TOOL_BORDER_WIDTH + 2)
     lg.arc("line", "open", toolX, toolY, L.toolR, ang - TOOL_HL_HALF, ang + TOOL_HL_HALF)
+    -- Short red tick at the exact contact angle (the calculation origin point).
+    lg.setColor(1, 0.15, 0.15, 1)
+    lg.arc("line", "open", toolX, toolY, L.toolR, ang - 4 * pi / 180, ang + 4 * pi / 180)
   end
   lg.setColor(1, 1, 1, 1)
 end
