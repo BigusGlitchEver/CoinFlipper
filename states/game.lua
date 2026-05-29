@@ -184,6 +184,11 @@ local POINTS = { red = 3, yellow = 2, blue = 1 }  -- zone point values
 --   depth 3  third  knocked coin:         100×  (×10 again)
 local CHAIN_BONUS = { [0] = 1, [1] = 2, [2] = 10, [3] = 100 }
 
+-- Keeps the board busy with chain opportunities.
+-- replenishCoins() tops up the live count each update frame.
+local MIN_BOARD_COINS    = 6    -- replenish below this
+local TARGET_BOARD_COINS = 8    -- replenish up to this
+
 local PANEL_W   = 220   -- left score panel width
 local BORDER_T  = 10    -- board border thickness (pixels each side)
 local MARGIN    = 12    -- gap between screen edge/panel and border outer edge
@@ -268,12 +273,10 @@ local function scatterCoins(n, item)
   return coins
 end
 
--- scatterBoard: places the floor's coins as three KINDS of food coin --
--- toast (large, easy), egg (medium), skull (small, hard) -- each a different
--- size and difficulty. Every coin STARTS inside the blank white start strip
--- along the bottom of the board (L.startY .. board bottom); the player flips
--- them up into the colored scoring zones. Spacing-checked. Returns a table of
--- Coin instances with itemType set.
+-- scatterBoard: places 8 opening food-coin tokens (toast large-easy /
+-- egg medium / skull small-hard) inside the white start strip so the player
+-- flips them up into the scoring zones. replenishCoins() (called each update)
+-- tops up the resting count to TARGET_BOARD_COINS when it drops below MIN.
 local function scatterBoard()
   local toastR = floor(L.coinR * 1.15)   -- large
   local eggR   = L.coinR                  -- medium
@@ -284,8 +287,11 @@ local function scatterBoard()
   local specs = {
     { radius = toastR, itemType = "toast", item = toastItem },
     { radius = eggR,   itemType = "egg",   item = eggItem   },
-    { radius = eggR,   itemType = "egg",   item = eggItem   },
     { radius = skullR, itemType = "skull", item = skullItem },
+    { radius = eggR,   itemType = "egg",   item = eggItem   },
+    { radius = toastR, itemType = "toast", item = toastItem },
+    { radius = skullR, itemType = "skull", item = skullItem },
+    { radius = eggR,   itemType = "egg",   item = eggItem   },
     { radius = toastR, itemType = "toast", item = toastItem },
   }
   -- Confine the initial scatter to the blank white start strip.
@@ -323,6 +329,53 @@ end
 -- Triangle tool: translucent grey body + thick dark edge border. The 3 edges
 -- ARE the contact surface. No dots, no outer ring; the leading-edge highlight
 -- (drawn separately) lights up whichever edge faces the coin.
+-- replenishCoins: called every update frame. Counts non-flying resting coins
+-- and adds random food-coin tokens when the count is below MIN_BOARD_COINS.
+-- Placed anywhere in the start strip to avoid spawning on top of scored zones.
+local function replenishCoins(self)
+  local resting = 0
+  for i = 1, #self.coins do
+    if not self.coins[i].flipping then resting = resting + 1 end
+  end
+  if resting >= MIN_BOARD_COINS then return end   -- board is full enough
+  local toastR = floor(L.coinR * 1.15)
+  local eggR   = L.coinR
+  local skullR = floor(L.coinR * 0.65)
+  local pool = {
+    { radius = toastR, itemType = "toast", item = Items.byId("toast") },
+    { radius = eggR,   itemType = "egg",   item = Items.byId("egg")   },
+    { radius = skullR, itemType = "skull", item = Items.byId("skull") },
+  }
+  local toAdd       = TARGET_BOARD_COINS - resting
+  local maxAttempts = 60
+  for n = 1, toAdd do
+    local spec = pool[love.math.random(#pool)]
+    local cr   = spec.radius
+    local loX  = floor(L.boardX + cr)
+    local hiX  = floor(L.boardX + L.boardW - cr)
+    local loY  = floor(L.startY + cr + 4)
+    local hiY  = floor(L.boardY + L.boardH - cr)
+    if hiY < loY then hiY = loY end
+    for attempt = 1, maxAttempts do
+      local x = love.math.random(loX, hiX)
+      local y = love.math.random(loY, hiY)
+      local ok = true
+      for j = 1, #self.coins do
+        local c = self.coins[j]
+        local dx, dy = x - c.x, y - c.y
+        local sep = cr + c.radius + 14
+        if (dx * dx + dy * dy) < (sep * sep) then ok = false; break end
+      end
+      if ok then
+        local c = Coin(x, y, cr)
+        c.itemType = spec.itemType
+        self.coins[#self.coins + 1] = c
+        break
+      end
+    end
+  end
+end
+
 local function drawTriangleToolAt(x, y)
   local r   = L.toolR
   local v1x = x + TRI_UX[1] * r;  local v1y = y + TRI_UY[1] * r
@@ -623,7 +676,7 @@ fireFlip = function(self, coin, contactX, contactY, depth)
   -- Player gate: only depth-0 flips block subsequent player input.
   if depth == 0 then self.activeCoin = coin end
   coin:launch(angle, power, arc, item, function(lx, ly)
-    local zone, _ = resolveFlip(self, coin, lx, ly, depth)
+    local zone, gain = resolveFlip(self, coin, lx, ly, depth)
     if zone == "red" or zone == "yellow" or zone == "blue" then
       coin.used = true   -- scoring zone: retire from player interaction
     elseif zone == "white_miss" then
@@ -631,6 +684,31 @@ fireFlip = function(self, coin, contactX, contactY, depth)
     end
     -- off_board_miss: coin.used unchanged (preserves prior state).
     -- Tier mutation on misses is handled inside resolveFlip.
+
+    -- Hot streak: only direct player flips (depth 0) count toward the streak.
+    -- Chain hits are explicitly excluded so they cannot inflate the counter.
+    if depth == 0 then
+      local scored = zone == "red" or zone == "yellow" or zone == "blue"
+      if scored and self.bonusReady then
+        -- Bonus fires! resolveFlip already banked `gain` marbles; add 29 more
+        -- copies so the total award for this flip is 30x the base gain.
+        self.marbles    = self.marbles + gain * 29
+        self.bonusReady = false
+        self.hotStreak  = 0
+        self.bonusFlash = 1.0   -- trigger x30 burst animation
+        self.scoreFlash = 0.20
+      elseif scored then
+        self.hotStreak = self.hotStreak + 1
+        if self.hotStreak >= 3 then
+          self.bonusReady = true
+        end
+      else
+        -- Any miss resets the streak and cancels a pending bonus.
+        self.hotStreak  = 0
+        self.bonusReady = false
+      end
+    end
+
     -- Chain reaction: bumps the depth. At depth 3 we still LAND and resolve
     -- normally, but we do NOT trigger a 4th-hop chain.
     if depth < 3 then
@@ -743,6 +821,10 @@ function Game:enter(prev, houseName)
   self.scoreFlash   = 0
   self._prevMult    = 1
   self._prevMarbles = 0
+  -- Hot-streak / x30 bonus (reset each floor).
+  self.hotStreak  = 0
+  self.bonusReady = false
+  self.bonusFlash = 0
   -- Hide the OS cursor on the flip board -- the grey tool circle IS the
   -- pointer. lm.getPosition() still works while the cursor is hidden.
   lm.setVisible(false)
@@ -826,6 +908,8 @@ function Game:update(dt)
   end
   if self.multBounce  > 0 then self.multBounce  = self.multBounce  - dt end
   if self.scoreFlash  > 0 then self.scoreFlash  = self.scoreFlash  - dt end
+  if self.bonusFlash  > 0 then self.bonusFlash  = self.bonusFlash  - dt end
+  replenishCoins(self)
 end
 
 function Game:draw()
@@ -939,6 +1023,43 @@ function Game:draw()
   lg.printf("CHAIN", cx, cy + 160, cw, "center")
   cy = cy + c2h + pm
 
+  -- Hot-streak progress card: three pip dots + glow when bonus is ready.
+  local cSH  = 48
+  local pipR = 7
+  local pipG = floor(cw / 4)
+  local p1x  = cx + floor(cw * 0.5) - pipG
+  lg.setColor(COLOR_CARD_BG[1], COLOR_CARD_BG[2], COLOR_CARD_BG[3])
+  lg.rectangle("fill", cx, cy, cw, cSH, 6, 6)
+  lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3])
+  lg.setLineWidth(2)
+  lg.rectangle("line", cx, cy, cw, cSH, 6, 6)
+  lg.setFont(HUD_FONT_SMALL)
+  lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3])
+  lg.print("HOT STREAK", cx + 8, cy + 7)
+  local pipY = cy + cSH - 14
+  for _pi = 1, 3 do
+    local pipX = p1x + (_pi - 1) * pipG
+    local pa   = 1.0
+    if self.bonusReady then
+      pa = 0.55 + 0.45 * math.abs(sin(lt.getTime() * 5))
+    end
+    if _pi <= self.hotStreak then
+      lg.setColor(COLOR_MULT_GOLD[1], COLOR_MULT_GOLD[2], COLOR_MULT_GOLD[3], pa)
+    else
+      lg.setColor(COLOR_BAR_BG[1], COLOR_BAR_BG[2], COLOR_BAR_BG[3])
+    end
+    lg.circle("fill", pipX, pipY, pipR)
+    lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3])
+    lg.setLineWidth(1.5)
+    lg.circle("line", pipX, pipY, pipR)
+  end
+  if self.bonusReady then
+    local bra = 0.65 + 0.35 * math.abs(sin(lt.getTime() * 5))
+    lg.setColor(COLOR_MULT_GOLD[1], COLOR_MULT_GOLD[2], COLOR_MULT_GOLD[3], bra)
+    lg.printf("BONUS READY!", cx, cy + 7, cw - 8, "right")
+  end
+  cy = cy + cSH + pm
+
   -- ── Card 3: Active Cards (fills remaining panel height) ──────────────
   local c3h = max(60, L.H - cy - pm)
   lg.setColor(COLOR_CARD_BG[1], COLOR_CARD_BG[2], COLOR_CARD_BG[3])
@@ -1016,6 +1137,27 @@ function Game:draw()
       (Items.byId(self.hoveredCoin.itemType or "coin") or self.activeCoinItem)
     drawHoverDebug(self.hoveredCoin, hItem,
                    self.armedDotX, self.armedDotY)
+  end
+
+  -- x30 bonus burst: large gold text that erupts and fades over ~1 second.
+  if self.bonusFlash > 0 then
+    local bft     = self.bonusFlash           -- 1.0 -> 0
+    local bfAlpha = bft * bft                 -- ease-in fade
+    local bfScale = 1.5 + (1 - bft) * 2.5   -- grows as it fades
+    local bcx     = L.boardX + L.boardW * 0.5
+    local bcy     = L.boardY + L.boardH * 0.42
+    lg.push()
+    lg.translate(bcx, bcy)
+    lg.scale(bfScale, bfScale)
+    lg.setFont(HUD_FONT_HUGE)
+    local bStr = "x30!"
+    local bsW  = HUD_FONT_HUGE:getWidth(bStr)
+    local bsH  = HUD_FONT_HUGE:getHeight()
+    lg.setColor(0.55, 0.28, 0, bfAlpha * 0.50)
+    lg.print(bStr, -bsW * 0.5 + 3, -bsH * 0.5 + 3)
+    lg.setColor(1, 0.86, 0.10, bfAlpha)
+    lg.print(bStr, -bsW * 0.5, -bsH * 0.5)
+    lg.pop()
   end
 
   lg.setColor(1, 1, 1, 1)
