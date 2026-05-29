@@ -141,6 +141,12 @@ local COLOR_TOOL_OUTLINE   = { 0x33/255, 0x33/255, 0x33/255 }
 local COLOR_HIGHLIGHT      = { 0.20, 0.95, 1.00 }   -- cyan "armed" ring
 local COLOR_TOOL_HL        = { 1.00, 0.88, 0.30 }   -- lit leading-edge segment
 local TOOL_BORDER_WIDTH    = 4                       -- chip border thickness
+-- Chip motion trail (comet tail). A position-history ring buffer sampled
+-- each frame and drawn as fading circles behind the chip. Purely cosmetic --
+-- it never feeds movement, collision, or scoring.
+local TRAIL_MAX      = 14     -- ring-buffer length (max stored points)
+local TRAIL_LIFE     = 0.30   -- seconds a point stays visible before fading
+local TRAIL_MIN_STEP = 3      -- min px the chip must move to record a point
 local COLOR_TEXT           = { 0.10, 0.10, 0.10 }
 local COLOR_TEXT_DIM       = { 0.40, 0.40, 0.40 }
 local COLOR_PANEL          = { 0x22/255, 0x22/255, 0x22/255 }  -- left panel bg
@@ -736,6 +742,16 @@ function Game:enter(prev, houseName)
   self.armedDotY      = nil
   -- Tool follows the mouse; initialize to current cursor so it doesn't pop in.
   self.toolX, self.toolY = lm.getPosition()
+  -- Chip motion trail: preallocated ring buffer (no per-frame allocation).
+  -- Each slot is reused; life>0 means active. Reset on (re)enter.
+  self.toolTrail = self.toolTrail or {}
+  for i = 1, TRAIL_MAX do
+    self.toolTrail[i] = self.toolTrail[i] or { x = 0, y = 0, life = 0 }
+    self.toolTrail[i].life = 0
+  end
+  self.toolTrailHead = 0      -- index of the most recently written slot
+  self.toolPrevX     = nil    -- last sampled chip position (for move delta)
+  self.toolPrevY     = nil
   self.toolType     = self.toolType or TOOL_CIRCLE  -- preserved across [R] restart
   self.debugRegions = self.debugRegions or false
   -- Hide the OS cursor on the flip board -- the grey tool circle IS the
@@ -798,9 +814,54 @@ function Game:_refreshHover()
   self:_updateArmed()
 end
 
+-- Chip motion trail update. Ages out existing points, then records a new
+-- point at the chip's current position if it moved far enough since the last
+-- sample. When the chip is still, no points are added and the existing ones
+-- fade away on their own -> the trail vanishes. Faster movement spaces points
+-- over a longer distance, so more are alive at once -> a longer tail.
+function Game:_updateTrail(dt)
+  local trail = self.toolTrail
+  for i = 1, TRAIL_MAX do
+    local p = trail[i]
+    if p.life > 0 then p.life = p.life - dt end
+  end
+  local px, py = self.toolPrevX, self.toolPrevY
+  if px then
+    local dx = self.toolX - px
+    local dy = self.toolY - py
+    if dx * dx + dy * dy >= TRAIL_MIN_STEP * TRAIL_MIN_STEP then
+      self.toolTrailHead = (self.toolTrailHead % TRAIL_MAX) + 1
+      local p = trail[self.toolTrailHead]
+      p.x, p.y, p.life = self.toolX, self.toolY, TRAIL_LIFE
+      self.toolPrevX, self.toolPrevY = self.toolX, self.toolY
+    end
+  else
+    self.toolPrevX, self.toolPrevY = self.toolX, self.toolY
+  end
+end
+
+-- Draws the trail as fading circles BEHIND the chip body: fresh points
+-- (nearest the chip) are brightest and largest; old points taper to nothing
+-- in the direction the chip came from -> a comet tail.
+function Game:_drawTrail()
+  local trail = self.toolTrail
+  local baseR = L.toolR * 0.55
+  local c     = COLOR_TOOL
+  for i = 1, TRAIL_MAX do
+    local p = trail[i]
+    if p.life > 0 then
+      local f = p.life / TRAIL_LIFE      -- 1 = fresh (near chip), 0 = tail end
+      lg.setColor(c[1], c[2], c[3], 0.38 * f)
+      lg.circle("fill", p.x, p.y, baseR * f)
+    end
+  end
+  lg.setColor(1, 1, 1, 1)
+end
+
 function Game:update(dt)
   -- Sample cursor once per frame; stored on self -- no per-frame allocation.
   self.toolX, self.toolY = lm.getPosition()
+  self:_updateTrail(dt)
   self:_refreshHover()
   for i = 1, #self.coins do self.coins[i]:update(dt) end
   if self.activeCoin and not self.activeCoin.flipping then
@@ -957,6 +1018,10 @@ function Game:draw()
 
   -- Highlight the coin the tool will fire against (auto-arm OR selected pair).
   drawHighlightFor(self.hoveredCoin)
+
+  -- Chip motion trail (comet tail), drawn BEHIND the chip body so it sits
+  -- behind it visually rather than on top.
+  self:_drawTrail()
 
   -- Flip tool follows the cursor: a plain grey chip with a thick dark border.
   if self.toolType == TOOL_TRIANGLE then
