@@ -1,0 +1,240 @@
+-- states/game/flip.lua
+-- Shot math + press resolution + the flip/chain launch path. Pure logic over
+-- the shared L layout and the active game state `self`; no drawing.
+
+local C     = require("states.game.config")
+local L     = require("states.game.layout")
+local Items = require("data.flip_items")
+local Tiers = require("data.coin_tiers")
+
+local sqrt  = math.sqrt
+local max   = math.max
+local cos   = math.cos
+local sin   = math.sin
+local pi    = math.pi
+local huge  = math.huge
+local floor = math.floor
+
+local TRI_UX      = C.TRI_UX
+local TRI_UY      = C.TRI_UY
+local POINTS      = C.POINTS
+local CHAIN_BONUS = C.CHAIN_BONUS
+
+local M = {}
+
+-- Tiny helper: linear interpolation in [0, 1].
+local function lerp(a, b, t) return a + (b - a) * t end
+
+-- Two-zone power/arc model. A hard discontinuity at zone_threshold (typically
+-- 0.65): inner zone is a short, high pop; outer zone is a long, flat launch.
+local function resolveShot(item, offDist)
+  local th = item.zone_threshold or 0.65
+  if offDist < th then
+    local t = offDist / th
+    return lerp(item.inner_power_center or 80,  item.inner_power_edge or 130, t),
+           lerp(item.inner_arc_center   or 220, item.inner_arc_edge   or 160, t)
+  end
+  local t = (offDist - th) / (1 - th)
+  return lerp(item.outer_power_center or 180, item.outer_power_edge or 340, t),
+         lerp(item.outer_arc_center   or 70,  item.outer_arc_edge   or 25,  t)
+end
+M.resolveShot = resolveShot
+
+-- Per-dot STRICT-CONTAINMENT resolution. Returns count of (dot, coin) pairs.
+local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriangle)
+  local count = 0
+  if isTriangle then
+    for d = 1, 3 do
+      local tx = toolX + TRI_UX[d] * toolR
+      local ty = toolY + TRI_UY[d] * toolR
+      local bestCoin, bestD2 = nil, huge
+      for i = 1, #coins do
+        local coin = coins[i]
+        if not coin.flipping and not coin.used then
+          local dx = tx - coin.x
+          local dy = ty - coin.y
+          local d2 = dx*dx + dy*dy
+          local cr = coin.radius
+          if d2 < cr*cr and d2 < bestD2 then
+            bestCoin = coin
+            bestD2   = d2
+          end
+        end
+      end
+      if bestCoin then
+        count = count + 1
+        local slot = outConflict[count]
+        slot.contactX = tx
+        slot.contactY = ty
+        slot.coin     = bestCoin
+        if count == 6 then break end
+      end
+    end
+  else
+    for i = 1, #coins do
+      local coin = coins[i]
+      if not coin.flipping and not coin.used then
+        local dx   = coin.x - toolX
+        local dy   = coin.y - toolY
+        local dist = sqrt(dx*dx + dy*dy)
+        if dist > 1 then
+          local rimDist = dist - toolR
+          if rimDist < 0 then rimDist = -rimDist end
+          if rimDist < coin.radius then
+            count = count + 1
+            local slot = outConflict[count]
+            local inv  = toolR / dist
+            slot.contactX = toolX + dx * inv
+            slot.contactY = toolY + dy * inv
+            slot.coin     = coin
+            if count == 6 then break end
+          end
+        end
+      end
+    end
+  end
+  return count
+end
+M.findPressedCoin = findPressedCoin
+
+-- Grandma's House 4-zone landing resolution. Concentric rectangles tested
+-- innermost-first so the highest zone always wins.
+local function resolveFlip(self, coin, landingX, landingY, depth)
+  local bx, by    = L.boardX, L.boardY
+  local bw, bh    = L.boardW, L.boardH
+  local tx, ty    = L.targetX, L.targetY
+  local tw, th    = L.targetW, L.targetH
+  local z1, z2, z3 = L.zone1, L.zone2, L.zone3
+  local tierMult  = Tiers[(coin.tier or 0) + 1].mult
+  local chainMult = CHAIN_BONUS[depth or 0] or 1
+
+  -- Off-board: full miss, chain resets.
+  if landingX < bx or landingX > bx + bw or
+     landingY < by or landingY > by + bh then
+    if coin.tier < 3 then coin.tier = coin.tier + 1 end
+    self.multiplier = 1
+    return "off_board_miss", 0
+  end
+
+  -- Red centre (innermost).
+  if landingX >= tx + z3 and landingX <= tx + tw - z3 and
+     landingY >= ty + z3 and landingY <= ty + th - z3 then
+    local gain = max(1, floor(POINTS.red * tierMult * self.multiplier * chainMult))
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "red", gain
+  end
+
+  -- Yellow band.
+  if landingX >= tx + z2 and landingX <= tx + tw - z2 and
+     landingY >= ty + z2 and landingY <= ty + th - z2 then
+    local gain = max(1, floor(POINTS.yellow * tierMult * self.multiplier * chainMult))
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "yellow", gain
+  end
+
+  -- Blue band.
+  if landingX >= tx + z1 and landingX <= tx + tw - z1 and
+     landingY >= ty + z1 and landingY <= ty + th - z1 then
+    local gain = max(1, floor(POINTS.blue * tierMult * self.multiplier * chainMult))
+    self.marbles    = self.marbles + gain
+    self.multiplier = self.multiplier + 1
+    return "blue", gain
+  end
+
+  -- White outer strip: on-board but no score. Coin stays live.
+  if coin.tier < 3 then coin.tier = coin.tier + 1 end
+  return "white_miss", 0
+end
+M.resolveFlip = resolveFlip
+
+-- Forward-declared because tryChainFlip calls fireFlip and fireFlip's launch
+-- callback calls tryChainFlip.
+local fireFlip, tryChainFlip
+
+fireFlip = function(self, coin, contactX, contactY, depth)
+  local item = (coin.itemType and Items.byId(coin.itemType)) or self.activeCoinItem
+  local offX, offY, offDist = coin:pressedBy(contactX, contactY)
+  if not offX then return end
+  local region = coin:regionAt(offX, offY, item)
+  local angle  = region and region.angle or -pi / 2
+  local power, arc = resolveShot(item, offDist)
+  if region then
+    if region.power then power = region.power end
+    if region.arc   then arc   = region.arc   end
+  end
+  if depth == 0 then self.activeCoin = coin end
+  coin:launch(angle, power, arc, item, function(lx, ly)
+    local zone, gain = resolveFlip(self, coin, lx, ly, depth)
+    if zone == "red" or zone == "yellow" or zone == "blue" then
+      coin.used = true
+    elseif zone == "white_miss" then
+      coin.used = false
+    end
+
+    if depth == 0 then
+      local scored = zone == "red" or zone == "yellow" or zone == "blue"
+      if scored and self.bonusReady then
+        self.marbles    = self.marbles + gain * 29
+        self.bonusReady = false
+        self.hotStreak  = 0
+        self.bonusFlash = 1.0
+        self.scoreFlash = 0.20
+      elseif scored then
+        self.hotStreak = self.hotStreak + 1
+        if self.hotStreak >= 3 then
+          self.bonusReady = true
+        end
+      else
+        self.hotStreak  = 0
+        self.bonusReady = false
+      end
+    end
+
+    if depth < 3 then
+      tryChainFlip(self, coin, lx, ly, depth + 1)
+    end
+    if depth == 0 then self.activeCoin = nil end
+  end, L.boardX, L.boardY, L.boardW, L.boardH)
+end
+M.fireFlip = function(self, coin, x, y, depth) return fireFlip(self, coin, x, y, depth) end
+
+tryChainFlip = function(self, landingCoin, lx, ly, depth)
+  local lr = landingCoin.radius
+  local a  = landingCoin.launchAngle or 0
+  local ca = cos(a)
+  local sa = sin(a)
+  for i = 1, #self.coins do
+    local target = self.coins[i]
+    if target ~= landingCoin
+       and not target.flipping then
+      local dx   = target.x - lx
+      local dy   = target.y - ly
+      local d2   = dx * dx + dy * dy
+      local sumR = lr + target.radius
+      if d2 < (sumR * sumR) then
+        local edgeX = lx + ca * lr
+        local edgeY = ly + sa * lr
+        local edx = edgeX - target.x
+        local edy = edgeY - target.y
+        local tr  = target.radius
+        if (edx * edx + edy * edy) >= (tr * tr) then
+          local d = sqrt(d2)
+          if d > 0 then
+            local invD = 1 / d
+            edgeX = lx + dx * invD * lr
+            edgeY = ly + dy * invD * lr
+          end
+        end
+        fireFlip(self, target, edgeX, edgeY, depth)
+      end
+    end
+  end
+end
+M.tryChainFlip = function(self, landing, lx, ly, depth) return tryChainFlip(self, landing, lx, ly, depth) end
+
+-- Internal direct refs (used by game.lua input path without wrapper overhead).
+M._fireFlip = function(self, coin, x, y, depth) return fireFlip(self, coin, x, y, depth) end
+
+return M
