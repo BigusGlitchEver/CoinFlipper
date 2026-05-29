@@ -4,6 +4,7 @@
 
 local C     = require("states.game.config")
 local L     = require("states.game.layout")
+local Spawn = require("states.game.spawn")
 local Items = require("data.flip_items")
 local Tiers = require("data.coin_tiers")
 
@@ -207,9 +208,15 @@ fireFlip = function(self, coin, contactX, contactY, depth)
       end
     end
 
-    if depth < 3 then
-      tryChainFlip(self, coin, lx, ly, depth + 1)
+    -- Spawn extra coins at the landing point for chain-activated flips.
+    -- depth > 0 means this coin was knocked by another; spawn `depth` extras.
+    -- depth == 0 is the player's own flip — no spawn.
+    if depth > 0 then
+      Spawn.spawnCoinsAt(self, lx, ly, depth, coin.tier or 0)
     end
+
+    -- Chain reaction: no depth cap — let the board get overloaded.
+    tryChainFlip(self, coin, lx, ly, depth + 1)
     if depth == 0 then self.activeCoin = nil end
   end, L.boardX, L.boardY, L.boardW, L.boardH)
 end

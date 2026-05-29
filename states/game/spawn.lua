@@ -7,8 +7,14 @@ local L     = require("states.game.layout")
 local Coin  = require("entities.coin")
 local Items = require("data.flip_items")
 
-local floor = math.floor
-local max   = math.max
+local floor   = math.floor
+local max     = math.max
+local min     = math.min
+local cos     = math.cos
+local sin     = math.sin
+local sqrt    = math.sqrt
+local pi      = math.pi
+local lrandom = love.math.random
 
 local MIN_BOARD_COINS    = C.MIN_BOARD_COINS
 local TARGET_BOARD_COINS = C.TARGET_BOARD_COINS
@@ -133,6 +139,31 @@ function M.replenishCoins(self)
         break
       end
     end
+  end
+end
+
+-- spawnCoinsAt: called from flip.lua after a chain-activated coin lands.
+-- Spawns `count` new coins within a 30px radius of (x, y), each inheriting
+-- `tier`. Coins are appended to self.coins and behave identically to any other
+-- board coin — fully scoreable and chain-capable.
+function M.spawnCoinsAt(self, x, y, count, tier)
+  if count <= 0 then return end
+  local cr  = L.coinR                          -- base coin radius
+  local bx  = L.boardX;  local bw = L.boardW
+  local by  = L.boardY;  local bh = L.boardH
+  local rad = 30                               -- scatter radius around landing
+  for i = 1, count do
+    -- Uniform distribution within a circle: random angle × sqrt-scaled radius.
+    local ang = lrandom() * 2 * pi
+    local r   = sqrt(lrandom()) * rad
+    local nx  = x + cos(ang) * r
+    local ny  = y + sin(ang) * r
+    -- Clamp inside board so coins don't appear outside the frame.
+    nx = max(bx + cr, nx);  nx = max(bx + cr, min(bx + bw - cr, nx))
+    ny = max(by + cr, ny);  ny = max(by + cr, min(by + bh - cr, ny))
+    local c = Coin(nx, ny, cr)
+    c.tier = tier or 0
+    self.coins[#self.coins + 1] = c
   end
 end
 
