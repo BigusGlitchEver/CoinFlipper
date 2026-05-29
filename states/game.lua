@@ -492,13 +492,13 @@ local function drawHoverDebug(coin, item, dotX, dotY)
   if not coin or not item or not dotX then return end
   local offX, offY, offDist = coin:pressedBy(dotX, dotY)
   if not offX then return end
-  local region = coin:regionAt(offX, offY, item)
-  if not region then return end
-  local angle = region.angle
+  -- Direction: straight line from the red bar contact point through the coin
+  -- center. No region snapping — smooth and geometrically exact.
+  local angle = math.atan2(coin.y - dotY, coin.x - dotX)
   local power = resolveShot(item, offDist)
-  if region.power then power = region.power end
-  local endX = coin.x + cos(angle) * power
-  local endY = coin.y + sin(angle) * power
+  local endX  = coin.x + cos(angle) * power
+  local endY  = coin.y + sin(angle) * power
+  -- Aiming line.
   lg.setColor(1, 0.08, 0.08, 1)
   lg.setLineWidth(2)
   lg.line(coin.x, coin.y, endX, endY)
@@ -506,7 +506,7 @@ local function drawHoverDebug(coin, item, dotX, dotY)
   lg.circle("line", endX, endY, 18)
   lg.circle("line", endX, endY, 10)
   lg.circle("fill", endX, endY, 3)
-  -- Crosshair lines through the target center.
+  -- Crosshair ticks outside the outer ring.
   lg.line(endX - 24, endY, endX - 20, endY)
   lg.line(endX + 20, endY, endX + 24, endY)
   lg.line(endX, endY - 24, endX, endY - 20)
