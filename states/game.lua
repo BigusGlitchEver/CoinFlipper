@@ -389,9 +389,6 @@ local function drawTriangleToolAt(x, y)
   lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.85)
   lg.setLineWidth(TOOL_BORDER_WIDTH)
   lg.polygon("line", v1x, v1y, v2x, v2y, v3x, v3y)
-  -- Red center dot: marks the (0,0) origin of the tap-offset math.
-  lg.setColor(1, 0.10, 0.10, 1)
-  lg.circle("fill", x, y, 4)
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -407,9 +404,6 @@ local function drawToolAt(x, y)
   lg.setColor(COLOR_TOOL_OUTLINE[1], COLOR_TOOL_OUTLINE[2], COLOR_TOOL_OUTLINE[3], 0.85)
   lg.setLineWidth(TOOL_BORDER_WIDTH)
   lg.circle("line", x, y, toolR)
-  -- Red center dot: marks the (0,0) origin of the tap-offset math.
-  lg.setColor(1, 0.10, 0.10, 1)
-  lg.circle("fill", x, y, 4)
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -509,21 +503,29 @@ local function drawHoverDebug(coin, item, dotX, dotY)
   local contactY = coin.y + offY * coin.radius
   lg.setColor(1, 1, 0, 1)
   lg.circle("fill", contactX, contactY, 4)
-  -- Direction line at full power.
+  -- Trajectory: single connected black arc showing height and distance.
   local endX = coin.x + cos(angle) * power
   local endY = coin.y + sin(angle) * power
-  lg.setColor(0.2, 1, 0.4, 0.85)
+  local N = 24
+  local pts = {}
+  for i = 0, N do
+    local t  = i / N
+    pts[#pts + 1] = coin.x + (endX - coin.x) * t
+    pts[#pts + 1] = coin.y + (endY - coin.y) * t - sin(t * pi) * arc
+  end
+  lg.setColor(0, 0, 0, 0.80)
   lg.setLineWidth(2)
-  lg.line(coin.x, coin.y, endX, endY)
-  -- Arc preview (sampled height curve, no allocations).
-  lg.setColor(0.2, 0.6, 1, 0.8)
-  local px, py = coin.x, coin.y
-  for i = 1, 14 do
-    local t  = i / 14
-    local sx = coin.x + (endX - coin.x) * t
-    local sy = coin.y + (endY - coin.y) * t - sin(t * pi) * arc
-    lg.line(px, py, sx, sy)
-    px, py = sx, sy
+  lg.line(pts)
+  -- Arrowhead: two lines angled back from the landing point.
+  local dx = pts[#pts-1] - pts[#pts-3]
+  local dy = pts[#pts]   - pts[#pts-2]
+  local len = math.sqrt(dx*dx + dy*dy)
+  if len > 0 then
+    dx, dy = dx / len, dy / len
+    local hLen, hSpread = 10, 5
+    local lx = endX - dx * hLen;  local ly = endY - dy * hLen
+    lg.line(endX, endY, lx - dy * hSpread, ly + dx * hSpread)
+    lg.line(endX, endY, lx + dy * hSpread, ly - dx * hSpread)
   end
   lg.setColor(1, 1, 1, 1)
 end
