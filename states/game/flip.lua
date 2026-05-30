@@ -236,11 +236,11 @@ fireFlip = function(self, coin, contactX, contactY, depth)
       end
     end
 
-    -- Chain reaction: stop triggering new chains at the cap depth so the
-    -- board multiplies up to but not beyond CHAIN_SPAWN_MAX_DEPTH contacts.
-    if depth < CHAIN_SPAWN_MAX_DEPTH then
-      tryChainFlip(self, coin, lx, ly, depth + 1)
-    end
+    -- Chain reaction: always propagate — the flipping flag on each coin
+    -- prevents cycles. The spawn-multiplication gate above (depth <= cap,
+    -- egg only, not isSpawned) is the only thing that limits splitting;
+    -- the knock-on chain itself is unlimited so all coins behave the same.
+    tryChainFlip(self, coin, lx, ly, depth + 1)
     if depth == 0 then self.activeCoin = nil end
   end, L.boardX + coin.radius + 1, L.boardY + coin.radius + 1,
        L.boardW - (coin.radius + 1) * 2, L.boardH - (coin.radius + 1) * 2)
