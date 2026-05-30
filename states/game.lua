@@ -147,9 +147,9 @@ local function resetFloor(self)
   self.bonusReady     = false
   self.flipsLeft      = FLIPS_PER_FLOOR
   self.floorTargetMet = false
+  loadFloorBoard(self)       -- load this floor's board BEFORE scattering coins
   self.coins          = Spawn.scatterBoard()
   self.runState       = "playing"
-  loadFloorBoard(self)       -- load this floor's board
   lm.setVisible(false)
 end
 

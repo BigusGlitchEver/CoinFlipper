@@ -180,6 +180,14 @@ function M.draw(self)
     lg.rectangle("line", z.x, z.y, z.w, z.h)
   end
 
+  -- Coin-spawn corral: a soft dashed-look ring showing where coins start.
+  local sc = L.spawnCircle
+  if sc then
+    lg.setColor(0.55, 0.55, 0.55, 0.30)
+    lg.setLineWidth(2)
+    lg.circle("line", sc.x, sc.y, sc.r, 48)
+  end
+
   -- Coins.
   for i = 1, #self.coins do self.coins[i]:draw() end
 

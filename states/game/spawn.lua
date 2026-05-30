@@ -21,6 +21,36 @@ local TARGET_BOARD_COINS = C.TARGET_BOARD_COINS
 
 local M = {}
 
+-- True when a coin of radius cr centred at (x, y) would overlap ANY scoring
+-- zone (edge-based, inflated by cr). Used to keep starting coins out of every
+-- point zone on every board.
+local function inAnyZone(x, y, cr)
+  local zones = L.zones
+  for i = 1, #zones do
+    local z = zones[i]
+    if x >= z.x - cr and x <= z.x + z.w + cr and
+       y >= z.y - cr and y <= z.y + z.h + cr then
+      return true
+    end
+  end
+  return false
+end
+
+-- Picks a random candidate start point for a coin of radius cr. If the active
+-- board defines a spawn circle, the point is drawn uniformly inside it (inset
+-- by cr so the coin never clips the circle edge); otherwise it's anywhere on
+-- the board interior, inset by cr from the walls.
+local function randStartPoint(cr)
+  local sc = L.spawnCircle
+  if sc then
+    local ang = lrandom() * 2 * pi
+    local rr  = sqrt(lrandom()) * max(0, sc.r - cr)
+    return sc.x + cos(ang) * rr, sc.y + sin(ang) * rr
+  end
+  return lrandom(floor(L.boardX + cr), floor(L.boardX + L.boardW - cr)),
+         lrandom(floor(L.boardY + cr), floor(L.boardY + L.boardH - cr))
+end
+
 function M.scatterCoins(n, item)
   local coins = {}
   local minSpacing = L.coinR * 2 + 12
@@ -71,20 +101,18 @@ function M.scatterBoard()
   local maxAttempts = 80
   for _, spec in ipairs(specs) do
     local cr  = spec.radius
-    -- Scatter anywhere on the full board interior, inset one radius so coins
-    -- never spawn clipped by the border walls.
-    local loY = floor(L.boardY + cr)
-    local hiY = floor(L.boardY + L.boardH - cr)
-    if hiY < loY then hiY = loY end
     for attempt = 1, maxAttempts do
-      local x = love.math.random(floor(L.boardX + cr), floor(L.boardX + L.boardW - cr))
-      local y = love.math.random(loY, hiY)
-      local ok = true
-      for j = 1, #coins do
-        local c = coins[j]
-        local dx, dy = x - c.x, y - c.y
-        local sep = cr + c.radius + 12
-        if (dx * dx + dy * dy) < (sep * sep) then ok = false; break end
+      -- Scatter inside the spawn circle (if any) or across the whole interior,
+      -- never inside a point zone.
+      local x, y = randStartPoint(cr)
+      local ok = not inAnyZone(x, y, cr)
+      if ok then
+        for j = 1, #coins do
+          local c = coins[j]
+          local dx, dy = x - c.x, y - c.y
+          local sep = cr + c.radius + 12
+          if (dx * dx + dy * dy) < (sep * sep) then ok = false; break end
+        end
       end
       if ok then
         local c = Coin(x, y, cr)
@@ -122,20 +150,18 @@ function M.replenishCoins(self)
   for n = 1, toAdd do
     local spec = pool[love.math.random(#pool)]
     local cr   = spec.radius
-    local loX  = floor(L.boardX + cr)
-    local hiX  = floor(L.boardX + L.boardW - cr)
-    local loY  = floor(L.boardY + cr)
-    local hiY  = floor(L.boardY + L.boardH - cr)
-    if hiY < loY then hiY = loY end
     for attempt = 1, maxAttempts do
-      local x = love.math.random(loX, hiX)
-      local y = love.math.random(loY, hiY)
-      local ok = true
-      for j = 1, #self.coins do
-        local c = self.coins[j]
-        local dx, dy = x - c.x, y - c.y
-        local sep = cr + c.radius + 14
-        if (dx * dx + dy * dy) < (sep * sep) then ok = false; break end
+      -- Same rules as scatterBoard: spawn circle (if any) or whole interior,
+      -- never inside a point zone.
+      local x, y = randStartPoint(cr)
+      local ok = not inAnyZone(x, y, cr)
+      if ok then
+        for j = 1, #self.coins do
+          local c = self.coins[j]
+          local dx, dy = x - c.x, y - c.y
+          local sep = cr + c.radius + 14
+          if (dx * dx + dy * dy) < (sep * sep) then ok = false; break end
+        end
       end
       if ok then
         local c = Coin(x, y, cr)

@@ -6,6 +6,7 @@ local C = require("states.game.config")
 
 local lg    = love.graphics
 local floor = math.floor
+local min   = math.min
 
 local PANEL_W             = C.PANEL_W
 local BORDER_T            = C.BORDER_T
@@ -19,6 +20,11 @@ local L = {}
 -- draw/update. Each entry: { x, y, w, h, points, color = {r,g,b} }.
 L.zones        = {}
 L.currentBoard = nil   -- the board def table currently loaded (for resize)
+
+-- Optional coin-spawn circle for the active board: { x, y, r } in pixels, or
+-- nil when the board scatters coins across the whole interior. Reused in place.
+L.spawnCircle  = nil
+local _spawnCircle = { x = 0, y = 0, r = 0 }
 
 -- Parses a "#RRGGBB" hex string into the reused out table {r,g,b} in 0..1.
 local function hexColor(hex, out)
@@ -53,6 +59,21 @@ function L.loadBoard(boardDef)
   end
   -- Trim any leftover zones from a previously larger board.
   for i = n + 1, #L.zones do L.zones[i] = nil end
+
+  -- Optional spawn circle. A board opts in with:
+  --   spawn = { cxPct = .., cyPct = .., rPct = .. }
+  -- cxPct/cyPct are centre fractions of the board interior; rPct is a fraction
+  -- of the interior's smaller dimension. When present, coins start inside this
+  -- circle instead of scattering across the whole surface.
+  local sp = boardDef.spawn
+  if sp then
+    _spawnCircle.x = bx + sp.cxPct * bw
+    _spawnCircle.y = by + sp.cyPct * bh
+    _spawnCircle.r = sp.rPct * min(bw, bh)
+    L.spawnCircle  = _spawnCircle
+  else
+    L.spawnCircle = nil
+  end
 end
 
 function L.rebuild()

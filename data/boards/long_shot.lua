@@ -9,6 +9,9 @@
 return {
   name      = "Long Shot",
   archetype = "shoot_long",
+  -- Keep all 8 starting coins corralled in a big circle at the bottom of the
+  -- board, well clear of the zone column at the top. Forces a long flip.
+  spawn = { cxPct = 0.50, cyPct = 0.71, rPct = 0.30 },
   zones = {
     -- Blue outer band of the column (1pt)
     { points = 1, color = "#3380D9", xPct = 0.30, yPct = 0.02, wPct = 0.40, hPct = 0.40 },
