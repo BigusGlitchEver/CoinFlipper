@@ -119,14 +119,11 @@ local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriang
 end
 M.findPressedCoin = findPressedCoin
 
--- Grandma's House 4-zone landing resolution. Concentric rectangles tested
--- innermost-first so the highest zone always wins.
---
--- Zone checks use the coin's EDGE, not its centre: a zone registers the moment
--- any part of the coin's disc overlaps the zone's inner boundary. Each inset
--- (z1/z2/z3) is shrunk by coin.radius so the threshold shifts outward to the
--- coin edge. Inner zones (z3 > z2 > z1) also keep their relative order because
--- the same offset is subtracted from all of them.
+-- Data-driven landing resolution over the active board's L.zones. The array is
+-- scanned in reverse (last index first) so the highest-value zone wins on any
+-- overlap. Zone checks use the coin's EDGE, not its centre: a zone registers
+-- the moment any part of the coin's disc overlaps the rect, so the rect is
+-- grown by coin.radius on every side. No match -> the existing miss handler.
 local function resolveFlip(self, coin, landingX, landingY, depth)
   local bx, by    = L.boardX, L.boardY
   local bw, bh    = L.boardW, L.boardH

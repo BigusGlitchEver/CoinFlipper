@@ -67,12 +67,13 @@ function M.scatterBoard()
     { radius = eggR,   itemType = "egg",   item = eggItem   },
     { radius = toastR, itemType = "toast", item = toastItem },
   }
-  local stripTop    = floor(L.startY + 4)
   local coins       = {}
   local maxAttempts = 80
   for _, spec in ipairs(specs) do
     local cr  = spec.radius
-    local loY = max(stripTop + cr, floor(L.boardY + cr))
+    -- Scatter anywhere on the full board interior, inset one radius so coins
+    -- never spawn clipped by the border walls.
+    local loY = floor(L.boardY + cr)
     local hiY = floor(L.boardY + L.boardH - cr)
     if hiY < loY then hiY = loY end
     for attempt = 1, maxAttempts do
@@ -123,7 +124,7 @@ function M.replenishCoins(self)
     local cr   = spec.radius
     local loX  = floor(L.boardX + cr)
     local hiX  = floor(L.boardX + L.boardW - cr)
-    local loY  = floor(L.startY + cr + 4)
+    local loY  = floor(L.boardY + cr)
     local hiY  = floor(L.boardY + L.boardH - cr)
     if hiY < loY then hiY = loY end
     for attempt = 1, maxAttempts do

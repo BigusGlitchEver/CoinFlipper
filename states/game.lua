@@ -40,6 +40,7 @@ local NUM_FLOORS       = C.NUM_FLOORS
 local PREVIEW_BTN_H    = C.PREVIEW_BTN_H
 local FLOOR_THRESHOLDS = C.FLOOR_THRESHOLDS
 local FLIPS_PER_FLOOR  = C.FLIPS_PER_FLOOR
+local HOUSE_FLOORS     = C.HOUSE_FLOORS
 local NEXT_ARROW_X = C.NEXT_ARROW_X
 local NEXT_ARROW_Y = C.NEXT_ARROW_Y
 local NEXT_ARROW_W = C.NEXT_ARROW_W
@@ -130,6 +131,14 @@ local function drawDebugArrows()
 end
 
 -- DEBUG: reset the board for a fresh floor (used by the prev-floor arrow).
+-- Loads the board assigned to the current house + floor. This is the single
+-- point of board assignment — swapping a board means editing HOUSE_FLOORS.
+local function loadFloorBoard(self)
+  local houses = HOUSE_FLOORS[(self.houseName or ""):lower()] or HOUSE_FLOORS.grandma
+  local path   = houses[self.floor] or houses[#houses]
+  L.loadBoard(require(path))
+end
+
 local function resetFloor(self)
   self.floorMarbles   = 0
   self.marbles        = 0
@@ -140,7 +149,7 @@ local function resetFloor(self)
   self.floorTargetMet = false
   self.coins          = Spawn.scatterBoard()
   self.runState       = "playing"
-  L.buildZones(self.floor)   -- rebuild scoring zones for the new floor
+  loadFloorBoard(self)       -- load this floor's board
   lm.setVisible(false)
 end
 
@@ -173,7 +182,7 @@ function Game:enter(prev, houseName)
   self.floorTargetMet = false
 
   L.rebuild()
-  L.buildZones(self.floor)
+  loadFloorBoard(self)
 
   self.activeCoinItem = Items.byId("coin")  -- fallback for legacy paths
   self.coins          = Spawn.scatterBoard()

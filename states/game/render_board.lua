@@ -34,8 +34,6 @@ local COLOR_ZONE_BLUE     = C.COLOR_ZONE_BLUE
 local COLOR_ZONE_YELLOW   = C.COLOR_ZONE_YELLOW
 local COLOR_ZONE_RED      = C.COLOR_ZONE_RED
 local COLOR_ZONE_BORDER   = C.COLOR_ZONE_BORDER
-local COLOR_DEAD          = C.COLOR_DEAD
-local DEAD_ALPHA          = C.DEAD_ALPHA
 
 local M = {}
 
@@ -166,15 +164,9 @@ function M.draw(self)
   lg.setColor(COLOR_BOARD)
   lg.rectangle("fill", L.boardX, L.boardY, L.boardW, L.boardH)
 
-  -- Grey dead-zone tints: painted BEFORE the scoring zones (floors 2 & 3).
-  local deadZones = L.deadZones
-  lg.setColor(COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3], DEAD_ALPHA)
-  for i = 1, #deadZones do
-    local d = deadZones[i]
-    lg.rectangle("fill", d.x, d.y, d.w, d.h)
-  end
-
-  -- Board scoring zones: data-driven rects (outermost-first) for this floor.
+  -- Board scoring zones: data-driven rects from the active board. Drawn in
+  -- index order (1 first, last on top); the white surface itself communicates
+  -- the dead/miss areas, so there are no grey tints.
   local zones = L.zones
   for i = 1, #zones do
     local z = zones[i]
@@ -187,13 +179,6 @@ function M.draw(self)
     local z = zones[i]
     lg.rectangle("line", z.x, z.y, z.w, z.h)
   end
-
-  -- Divider + label for the blank white start strip.
-  lg.setColor(COLOR_ZONE_BORDER)
-  lg.setLineWidth(2)
-  lg.line(L.boardX, L.startY, L.boardX + L.boardW, L.startY)
-  lg.setColor(0.55, 0.55, 0.55, 0.55)
-  lg.printf("START ZONE", L.boardX, L.startY + floor(L.startH * 0.5) - 8, L.boardW, "center")
 
   -- Coins.
   for i = 1, #self.coins do self.coins[i]:draw() end

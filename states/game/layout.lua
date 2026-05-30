@@ -15,47 +15,44 @@ local TOOL_R_FACTOR       = C.TOOL_R_FACTOR
 
 local L = {}
 
--- Pre-allocated, reused every rebuild so we never churn tables in draw/update.
-L.zones     = {}   -- pixel scoring rects: { x, y, w, h, points, color }
-L.deadZones = {}   -- pixel grey-tint rects: { x, y, w, h }
-L.floor     = 1
+-- Pre-allocated, reused on every board load so we never churn tables in
+-- draw/update. Each entry: { x, y, w, h, points, color = {r,g,b} }.
+L.zones        = {}
+L.currentBoard = nil   -- the board def table currently loaded (for resize)
 
--- Converts the proportional zone defs from C.getZoneLayout(floor) into pixel
--- rects inside the current TARGET area. Repopulates L.zones / L.deadZones in
--- place (no new tables). Call after L.rebuild() and whenever the floor changes.
-function L.buildZones(floor)
-  L.floor = floor or 1
-  local def = C.getZoneLayout(L.floor)
-  local tx, ty = L.targetX, L.targetY
-  local tw, th = L.targetW, L.targetH
+-- Parses a "#RRGGBB" hex string into the reused out table {r,g,b} in 0..1.
+local function hexColor(hex, out)
+  out[1] = tonumber(hex:sub(2, 3), 16) / 255
+  out[2] = tonumber(hex:sub(4, 5), 16) / 255
+  out[3] = tonumber(hex:sub(6, 7), 16) / 255
+  return out
+end
 
-  local zsrc = def.zones
+-- Loads a board definition (already require()d) and converts each proportional
+-- zone into an absolute pixel rect inside the FULL board interior rectangle
+-- (the entire white surface: boardX/Y/W/H, wall to wall). Repopulates L.zones
+-- in place — never allocates a new array, and reuses each zone + color table.
+function L.loadBoard(boardDef)
+  L.currentBoard = boardDef
+  local bx, by = L.boardX, L.boardY
+  local bw, bh = L.boardW, L.boardH
+
+  local zsrc = boardDef.zones
   local n = #zsrc
   for i = 1, n do
-    local z = zsrc[i]
+    local z   = zsrc[i]
     local dst = L.zones[i]
-    if not dst then dst = {}; L.zones[i] = dst end
-    dst.x      = tx + z.xPct * tw
-    dst.y      = ty + z.yPct * th
-    dst.w      = z.wPct * tw
-    dst.h      = z.hPct * th
+    if not dst then dst = { color = {} }; L.zones[i] = dst end
+    if not dst.color then dst.color = {} end
+    dst.x      = bx + z.xPct * bw
+    dst.y      = by + z.yPct * bh
+    dst.w      = z.wPct * bw
+    dst.h      = z.hPct * bh
     dst.points = z.points
-    dst.color  = z.color
+    hexColor(z.color, dst.color)
   end
+  -- Trim any leftover zones from a previously larger board.
   for i = n + 1, #L.zones do L.zones[i] = nil end
-
-  local dsrc = def.dead
-  local dn = #dsrc
-  for i = 1, dn do
-    local d = dsrc[i]
-    local dst = L.deadZones[i]
-    if not dst then dst = {}; L.deadZones[i] = dst end
-    dst.x = tx + d.xPct * tw
-    dst.y = ty + d.yPct * th
-    dst.w = d.wPct * tw
-    dst.h = d.hPct * th
-  end
-  for i = dn + 1, #L.deadZones do L.deadZones[i] = nil end
 end
 
 function L.rebuild()
@@ -72,28 +69,19 @@ function L.rebuild()
   L.borderW = L.W - L.borderX - MARGIN
   L.borderH = L.H - MARGIN * 2
 
-  -- Inner playing surface (inset BORDER_T on all sides).
+  -- Inner playing surface (inset BORDER_T on all sides). This full rectangle
+  -- is the entire white board interior — zones can be placed anywhere on it.
   L.boardX = L.borderX + BORDER_T
   L.boardY = L.borderY + BORDER_T
   L.boardW = L.borderW - BORDER_T * 2
   L.boardH = L.borderH - BORDER_T * 2
 
-  -- Blank white START strip along the bottom of the board.
-  L.startH = floor(L.boardH * 0.34)
-  L.startY = L.boardY + L.boardH - L.startH
-
-  -- Scoring target area = the board ABOVE the start strip.
-  L.targetX = L.boardX
-  L.targetY = L.boardY
-  L.targetW = L.boardW
-  L.targetH = L.boardH - L.startH
-
   -- Coin + tool size.
   L.coinR = COIN_RADIUS_AT_390W
   L.toolR = L.coinR * TOOL_R_FACTOR
 
-  -- Rebuild the pixel scoring zones for the current floor.
-  L.buildZones(L.floor)
+  -- Re-project the current board's zones onto the new geometry.
+  if L.currentBoard then L.loadBoard(L.currentBoard) end
 end
 
 return L
