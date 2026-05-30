@@ -15,6 +15,7 @@
 local StateMachine = require("statemachine")
 local Items        = require("data.flip_items")
 local Services     = require("services")
+local Map          = require("states.map")
 
 local C          = require("states.game.config")
 local F          = require("states.game.fonts")
@@ -41,10 +42,13 @@ local FLOOR_THRESHOLDS = C.FLOOR_THRESHOLDS
 
 -- Overlay geometry (fixed 800 × 600 window).
 local OVL_X, OVL_Y, OVL_W, OVL_H   = 180, 95,  440, 230
-local PRI_X, PRI_Y, PRI_W, PRI_H    = 315, 263, 170, 42   -- primary action btn
-local SEC_X, SEC_Y, SEC_W, SEC_H    = 180, 340, 440, 120  -- "play again?" box
+local PRI_X, PRI_Y, PRI_W, PRI_H    = 315, 263, 170, 42   -- primary action btn (between/win)
+local SEC_X, SEC_Y, SEC_W, SEC_H    = 180, 340, 440, 120  -- "play again?" box (win only)
 local YEA_X, YEA_Y, YEA_W, YEA_H   = 219, 408, 175, 38   -- "You Betcha!" btn
 local NAH_X, NAH_Y, NAH_W, NAH_H   = 406, 408, 175, 38   -- "Nah" btn
+-- Lose state has two side-by-side buttons inside the main box.
+local LTR_X, LTR_Y, LTR_W, LTR_H   = 230, 263, 165, 42   -- "TRY AGAIN" btn
+local LBM_X, LBM_Y, LBM_W, LBM_H   = 405, 263, 175, 42   -- "BACK TO MAP" btn
 
 -- Shared palette for overlays.
 local OVL_BG       = { 0.12, 0.10, 0.08, 0.93 }
@@ -81,6 +85,7 @@ local function setRunState(self, state)
   self.runState = state
   if state == "win" then
     if Services.bank then Services.bank:deposit(self.runMarbles or 0) end
+    Map.markConquered(self.houseName)
   end
 end
 
@@ -109,6 +114,7 @@ function Game:enter(prev, houseName)
   self.runMarbles   = 0
   self.multiplier   = 1
   self.runState     = "playing"
+  self.noCoinsTimer = 0
 
   L.rebuild()
 
@@ -240,7 +246,7 @@ function Game:update(dt)
   Spawn.replenishCoins(self)
   if self.cardPanel then self.cardPanel:update(dt) end
 
-  -- Check floor threshold.
+  -- Check floor threshold (win / advance).
   local thresh = FLOOR_THRESHOLDS[self.floor] or 0
   if (self.floorMarbles or 0) >= thresh then
     if self.floor >= NUM_FLOORS then
@@ -248,6 +254,25 @@ function Game:update(dt)
     else
       setRunState(self, "between")
     end
+    return
+  end
+
+  -- Lose check: if there are no clickable coins and nothing is in flight,
+  -- the player is stuck. Give a 1.5-second grace window (replenish may need
+  -- a frame to place coins after a chain reaction clears the board).
+  local anyFlipping, anyClickable = false, false
+  for i = 1, #self.coins do
+    local c = self.coins[i]
+    if c.flipping then anyFlipping = true end
+    if not c.flipping and not c.used then anyClickable = true end
+  end
+  if not anyFlipping and not anyClickable then
+    self.noCoinsTimer = (self.noCoinsTimer or 0) + dt
+    if self.noCoinsTimer >= 1.5 then
+      setRunState(self, "lose")
+    end
+  else
+    self.noCoinsTimer = 0
   end
 end
 
@@ -270,14 +295,14 @@ function Game:drawOverlay()
   local titleColor, titleText, bodyLine1, bodyLine2
   if rs == "win" then
     titleColor = OVL_TITLE_WIN
-    titleText  = "YOU WIN!"
-    bodyLine1  = "Run complete!  All floors cleared."
+    titleText  = "YOU WIN THE HOUSE!"
+    bodyLine1  = "All " .. NUM_FLOORS .. " floors cleared!"
     bodyLine2  = commaNum(self.runMarbles) .. " marbles banked."
   elseif rs == "lose" then
     titleColor = OVL_TITLE_LOSE
-    titleText  = "GAME OVER"
-    bodyLine1  = "Better luck next time."
-    bodyLine2  = commaNum(self.runMarbles) .. " marbles earned this run."
+    titleText  = "YOU LOSE"
+    bodyLine1  = "No more coins to flip."
+    bodyLine2  = "You earned " .. commaNum(self.runMarbles) .. " marbles."
   else -- between
     titleColor = OVL_TITLE_NEXT
     titleText  = "FLOOR " .. self.floor .. " CLEAR!"
@@ -295,30 +320,32 @@ function Game:drawOverlay()
   lg.printf(bodyLine1, OVL_X + 20, OVL_Y + 90,  OVL_W - 40, "center")
   lg.printf(bodyLine2, OVL_X + 20, OVL_Y + 118, OVL_W - 40, "center")
 
-  -- Primary action button.
-  local priLabel
-  if rs == "win" then
-    priLabel = "BACK TO MAP"
-  elseif rs == "lose" then
-    priLabel = "BACK TO MAP"
-  else
-    priLabel = "NEXT FLOOR"
+  if rs == "lose" then
+    -- Two side-by-side buttons: Try Again and Back to Map.
+    drawBtn(LTR_X, LTR_Y, LTR_W, LTR_H, BTN_PRI_BG, "TRY AGAIN",   F.MEDIUM, mx, my)
+    drawBtn(LBM_X, LBM_Y, LBM_W, LBM_H, BTN_NEG_BG, "BACK TO MAP", F.MEDIUM, mx, my)
+
+  elseif rs == "between" then
+    -- Single button: advance to next floor.
+    drawBtn(PRI_X, PRI_Y, PRI_W, PRI_H, BTN_PRI_BG, "NEXT FLOOR", F.MEDIUM, mx, my)
+
+  else  -- "win" — full house cleared
+    drawBtn(PRI_X, PRI_Y, PRI_W, PRI_H, BTN_PRI_BG, "BACK TO MAP", F.MEDIUM, mx, my)
+
+    -- ── "Play again?" box (win only) ─────────────────────────────────
+    lg.setColor(OVL_BG[1], OVL_BG[2], OVL_BG[3], OVL_BG[4])
+    lg.rectangle("fill", SEC_X, SEC_Y, SEC_W, SEC_H, 10, 10)
+    lg.setColor(OVL_BORDER[1], OVL_BORDER[2], OVL_BORDER[3], 0.60)
+    lg.setLineWidth(1.5)
+    lg.rectangle("line", SEC_X, SEC_Y, SEC_W, SEC_H, 10, 10)
+
+    lg.setFont(F.MEDIUM)
+    lg.setColor(OVL_DIM[1], OVL_DIM[2], OVL_DIM[3])
+    lg.printf("Play this house again?", SEC_X, SEC_Y + 18, SEC_W, "center")
+
+    drawBtn(YEA_X, YEA_Y, YEA_W, YEA_H, BTN_PRI_BG, "You Betcha!", F.MEDIUM, mx, my)
+    drawBtn(NAH_X, NAH_Y, NAH_W, NAH_H, BTN_NEG_BG, "Nah",         F.MEDIUM, mx, my)
   end
-  drawBtn(PRI_X, PRI_Y, PRI_W, PRI_H, BTN_PRI_BG, priLabel, F.MEDIUM, mx, my)
-
-  -- ── "Play again?" box ────────────────────────────────────────────────
-  lg.setColor(OVL_BG[1], OVL_BG[2], OVL_BG[3], OVL_BG[4])
-  lg.rectangle("fill", SEC_X, SEC_Y, SEC_W, SEC_H, 10, 10)
-  lg.setColor(OVL_BORDER[1], OVL_BORDER[2], OVL_BORDER[3], 0.60)
-  lg.setLineWidth(1.5)
-  lg.rectangle("line", SEC_X, SEC_Y, SEC_W, SEC_H, 10, 10)
-
-  lg.setFont(F.MEDIUM)
-  lg.setColor(OVL_DIM[1], OVL_DIM[2], OVL_DIM[3])
-  lg.printf("Play this house again?", SEC_X, SEC_Y + 18, SEC_W, "center")
-
-  drawBtn(YEA_X, YEA_Y, YEA_W, YEA_H, BTN_PRI_BG, "You Betcha!",  F.MEDIUM, mx, my)
-  drawBtn(NAH_X, NAH_Y, NAH_W, NAH_H, BTN_NEG_BG, "Nah",          F.MEDIUM, mx, my)
 
   lg.setColor(1, 1, 1, 1)
 end
@@ -344,33 +371,49 @@ function Game:mousepressed(x, y, button)
   -- ── Overlay click handling ────────────────────────────────────────────
   local rs = self.runState
   if rs and rs ~= "playing" then
-    -- Primary action button.
-    if x >= PRI_X and x <= PRI_X + PRI_W and y >= PRI_Y and y <= PRI_Y + PRI_H then
-      if rs == "between" then
-        -- Advance to next floor.
+    if rs == "lose" then
+      -- TRY AGAIN button.
+      if x >= LTR_X and x <= LTR_X + LTR_W and y >= LTR_Y and y <= LTR_Y + LTR_H then
+        Game:enter(nil, self.houseName)
+        return
+      end
+      -- BACK TO MAP button.
+      if x >= LBM_X and x <= LBM_X + LBM_W and y >= LBM_Y and y <= LBM_Y + LBM_H then
+        StateMachine.switch("map")
+        return
+      end
+
+    elseif rs == "between" then
+      -- NEXT FLOOR button.
+      if x >= PRI_X and x <= PRI_X + PRI_W and y >= PRI_Y and y <= PRI_Y + PRI_H then
         self.floor        = self.floor + 1
         self.floorMarbles = 0
         self.marbles      = 0
         self.multiplier   = 1
         self.hotStreak    = 0
         self.bonusReady   = false
+        self.noCoinsTimer = 0
         self.coins        = Spawn.scatterBoard()
         self.runState     = "playing"
-      else
-        -- Win or lose → back to map.
-        StateMachine.switch("map")
+        return
       end
-      return
-    end
-    -- "You Betcha!" — restart this house.
-    if x >= YEA_X and x <= YEA_X + YEA_W and y >= YEA_Y and y <= YEA_Y + YEA_H then
-      Game:enter(nil, self.houseName)
-      return
-    end
-    -- "Nah" — go to map.
-    if x >= NAH_X and x <= NAH_X + NAH_W and y >= NAH_Y and y <= NAH_Y + NAH_H then
-      StateMachine.switch("map")
-      return
+
+    else  -- "win"
+      -- BACK TO MAP button.
+      if x >= PRI_X and x <= PRI_X + PRI_W and y >= PRI_Y and y <= PRI_Y + PRI_H then
+        StateMachine.switch("map")
+        return
+      end
+      -- "You Betcha!" — restart this house.
+      if x >= YEA_X and x <= YEA_X + YEA_W and y >= YEA_Y and y <= YEA_Y + YEA_H then
+        Game:enter(nil, self.houseName)
+        return
+      end
+      -- "Nah" — go to map.
+      if x >= NAH_X and x <= NAH_X + NAH_W and y >= NAH_Y and y <= NAH_Y + NAH_H then
+        StateMachine.switch("map")
+        return
+      end
     end
     return  -- eat all other clicks while overlay is up
   end

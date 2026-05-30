@@ -99,9 +99,26 @@ end
 -- Called every update frame. Adds random food-coin tokens when the resting
 -- count is below MIN_BOARD_COINS, placed anywhere in the start strip.
 function M.replenishCoins(self)
+  -- Prune used, non-flipping coins first (they're retired; keeping them
+  -- on the board blocks new coins from spawning and makes replenish think
+  -- the board is fuller than it is).
+  local n = #self.coins
+  local j = 1
+  while j <= n do
+    local c = self.coins[j]
+    if c.used and not c.flipping then
+      self.coins[j] = self.coins[n]
+      self.coins[n] = nil
+      n = n - 1
+    else
+      j = j + 1
+    end
+  end
+
   local resting = 0
-  for i = 1, #self.coins do
-    if not self.coins[i].flipping then resting = resting + 1 end
+  for i = 1, n do
+    local c = self.coins[i]
+    if not c.flipping and not c.used then resting = resting + 1 end
   end
   if resting >= MIN_BOARD_COINS then return end
   local toastR = floor(L.coinR * 1.15)
