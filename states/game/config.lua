@@ -108,6 +108,14 @@ M.COINS_PER_FLOOR     = 5
 M.COIN_RADIUS_AT_390W = 24                  -- spec: 48px DIAMETER at 390w
 M.FLOOR_THRESHOLDS    = { [1] = 2000, [2] = 5000, [3] = 10000 }
 M.FLIPS_PER_FLOOR     = 25   -- shots allowed per floor; out of flips = lose
+
+-- Green "progress to next floor" arrow button at the right end of the marble
+-- progress bar. Shared by render_hud (draw) and game.lua (hit-test). Only
+-- shown/active once the floor target has been reached.
+M.NEXT_ARROW_X = 183
+M.NEXT_ARROW_Y = 184
+M.NEXT_ARROW_W = 26
+M.NEXT_ARROW_H = 26
 M.NUM_FLOORS          = 3
 M.POINTS              = { red = 3, yellow = 2, blue = 1 }  -- zone point values
 M.CHAIN_BONUS         = { [0] = 1, [1] = 2, [2] = 10, [3] = 100 }

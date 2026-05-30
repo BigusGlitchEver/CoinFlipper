@@ -40,6 +40,10 @@ local NUM_FLOORS       = C.NUM_FLOORS
 local PREVIEW_BTN_H    = C.PREVIEW_BTN_H
 local FLOOR_THRESHOLDS = C.FLOOR_THRESHOLDS
 local FLIPS_PER_FLOOR  = C.FLIPS_PER_FLOOR
+local NEXT_ARROW_X = C.NEXT_ARROW_X
+local NEXT_ARROW_Y = C.NEXT_ARROW_Y
+local NEXT_ARROW_W = C.NEXT_ARROW_W
+local NEXT_ARROW_H = C.NEXT_ARROW_H
 
 -- Overlay geometry (fixed 800 × 600 window).
 local OVL_X, OVL_Y, OVL_W, OVL_H   = 180, 95,  440, 230
@@ -84,12 +88,25 @@ local Game = {}
 
 -- ---------- State lifecycle ----------
 
--- Sets the run state and fires any one-time side-effects.
+-- Sets the run state and fires any one-time side-effects. Showing an overlay
+-- (any state other than "playing") brings the OS mouse cursor back so the
+-- player can click the overlay buttons; returning to play hides it again.
 local function setRunState(self, state)
   self.runState = state
+  lm.setVisible(state ~= "playing")
   if state == "win" then
     if Services.bank then Services.bank:deposit(self.runMarbles or 0) end
     Map.markConquered(self.houseName)
+  end
+end
+
+-- Advances past a cleared floor: clearing floor 3 ends the run (win screen),
+-- any earlier floor shows the floor-clear screen.
+local function advanceStage(self)
+  if self.floor >= NUM_FLOORS then
+    setRunState(self, "win")
+  else
+    setRunState(self, "between")
   end
 end
 
@@ -114,14 +131,16 @@ end
 
 -- DEBUG: reset the board for a fresh floor (used by the prev-floor arrow).
 local function resetFloor(self)
-  self.floorMarbles = 0
-  self.marbles      = 0
-  self.multiplier   = 1
-  self.hotStreak    = 0
-  self.bonusReady   = false
-  self.flipsLeft    = FLIPS_PER_FLOOR
-  self.coins        = Spawn.scatterBoard()
-  self.runState     = "playing"
+  self.floorMarbles   = 0
+  self.marbles        = 0
+  self.multiplier     = 1
+  self.hotStreak      = 0
+  self.bonusReady     = false
+  self.flipsLeft      = FLIPS_PER_FLOOR
+  self.floorTargetMet = false
+  self.coins          = Spawn.scatterBoard()
+  self.runState       = "playing"
+  lm.setVisible(false)
 end
 
 -- Draws a rounded-rect button and returns whether the mouse is over it.
@@ -148,8 +167,9 @@ function Game:enter(prev, houseName)
   self.floorMarbles = 0
   self.runMarbles   = 0
   self.multiplier   = 1
-  self.runState     = "playing"
-  self.flipsLeft    = FLIPS_PER_FLOOR
+  self.runState      = "playing"
+  self.flipsLeft     = FLIPS_PER_FLOOR
+  self.floorTargetMet = false
 
   L.rebuild()
 
@@ -280,22 +300,19 @@ function Game:update(dt)
   if self.bonusFlash  > 0 then self.bonusFlash  = self.bonusFlash  - dt end
   if self.cardPanel then self.cardPanel:update(dt) end
 
-  -- Check floor threshold (win / advance).
+  -- Floor target: once reached, just flag it. This surfaces the green
+  -- "progress to next floor" arrow on the progress bar but keeps play going —
+  -- the clear/win screen only appears when the player clicks that arrow or
+  -- runs out of moves.
   local thresh = FLOOR_THRESHOLDS[self.floor] or 0
   if (self.floorMarbles or 0) >= thresh then
-    if self.floor >= NUM_FLOORS then
-      setRunState(self, "win")
-    else
-      setRunState(self, "between")
-    end
-    return
+    self.floorTargetMet = true
   end
 
-  -- Lose check: the player has no moves left. We wait until every coin has
-  -- settled (nothing still flipping) so a final chain reaction gets its
-  -- chance to push us over the threshold first. Then, if there are no
-  -- clickable coins remaining (every coin is in its Done/used state) OR the
-  -- flip budget is spent, the floor is lost.
+  -- No-moves check: every coin has settled (nothing flipping) and there are
+  -- no clickable coins left (all in their Done/used state) OR the flip budget
+  -- is spent. We wait for settle so a final chain still gets its chance. If
+  -- the target was met by then it's a clear/win; otherwise it's a loss.
   local anyFlipping, anyClickable = false, false
   for i = 1, #self.coins do
     local c = self.coins[i]
@@ -306,7 +323,11 @@ function Game:update(dt)
     end
   end
   if not anyFlipping and (not anyClickable or (self.flipsLeft or 0) <= 0) then
-    setRunState(self, "lose")
+    if self.floorTargetMet then
+      advanceStage(self)
+    else
+      setRunState(self, "lose")
+    end
   end
 end
 
@@ -403,15 +424,8 @@ function Game:mousepressed(x, y, button)
     if rs == "between" then
       -- NEXT FLOOR button.
       if x >= PRI_X and x <= PRI_X + PRI_W and y >= PRI_Y and y <= PRI_Y + PRI_H then
-        self.floor        = self.floor + 1
-        self.floorMarbles = 0
-        self.marbles      = 0
-        self.multiplier   = 1
-        self.hotStreak    = 0
-        self.bonusReady   = false
-        self.flipsLeft    = FLIPS_PER_FLOOR
-        self.coins        = Spawn.scatterBoard()
-        self.runState     = "playing"
+        self.floor = self.floor + 1
+        resetFloor(self)
         return
       end
 
@@ -450,6 +464,13 @@ function Game:mousepressed(x, y, button)
 
   -- ── Normal gameplay clicks ────────────────────────────────────────────
   if x < L.panelW then
+    -- Green "progress to next floor" arrow — only active once the target's met.
+    if self.floorTargetMet
+       and x >= NEXT_ARROW_X and x <= NEXT_ARROW_X + NEXT_ARROW_W
+       and y >= NEXT_ARROW_Y and y <= NEXT_ARROW_Y + NEXT_ARROW_H then
+      advanceStage(self)
+      return
+    end
     local btnY = L.H - PREVIEW_BTN_H - 10   -- 10 = HUD pm constant
     if y >= btnY and y <= btnY + PREVIEW_BTN_H then
       self.trajectoryPreview = not self.trajectoryPreview

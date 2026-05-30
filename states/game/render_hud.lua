@@ -36,6 +36,11 @@ local COLOR_BAR_FILL    = C.COLOR_BAR_FILL
 local FLOOR_THRESHOLDS  = C.FLOOR_THRESHOLDS
 local NUM_FLOORS        = C.NUM_FLOORS
 local PREVIEW_BTN_H     = C.PREVIEW_BTN_H
+local NEXT_ARROW_X      = C.NEXT_ARROW_X
+local NEXT_ARROW_Y      = C.NEXT_ARROW_Y
+local NEXT_ARROW_W      = C.NEXT_ARROW_W
+local NEXT_ARROW_H      = C.NEXT_ARROW_H
+local abs               = math.abs
 
 local M = {}
 
@@ -102,13 +107,27 @@ function M.draw(self)
   lg.setColor(COLOR_CARD_BORDER[1], COLOR_CARD_BORDER[2], COLOR_CARD_BORDER[3], 0.55)
   lg.setLineWidth(1)
   lg.rectangle("line", barX, barY, barW, barH, 5, 5)
-  local sCX = barX + barW + 14
-  local sCY = barY + barH * 0.5
-  lg.setColor(COLOR_MULT_GOLD[1], COLOR_MULT_GOLD[2], COLOR_MULT_GOLD[3])
-  lg.circle("fill", sCX, sCY, 9)
-  lg.setColor(0.18, 0.10, 0.02)
-  lg.setLineWidth(1.5)
-  lg.circle("line", sCX, sCY, 9)
+  if self.floorTargetMet then
+    -- Pulsing green "progress to next floor" arrow at the bar's right end.
+    local ax, ay, aw, ah = NEXT_ARROW_X, NEXT_ARROW_Y, NEXT_ARROW_W, NEXT_ARROW_H
+    local pulse = 0.70 + 0.30 * abs(sin(lt.getTime() * 4))
+    lg.setColor(0.20, 0.72, 0.26, pulse)
+    lg.rectangle("fill", ax, ay, aw, ah, 6, 6)
+    lg.setColor(0.08, 0.34, 0.12)
+    lg.setLineWidth(2)
+    lg.rectangle("line", ax, ay, aw, ah, 6, 6)
+    lg.setColor(1, 1, 1, 1)
+    local acx, acy = ax + aw * 0.5, ay + ah * 0.5
+    lg.polygon("fill", acx - 5, acy - 7, acx - 5, acy + 7, acx + 8, acy)
+  else
+    local sCX = barX + barW + 14
+    local sCY = barY + barH * 0.5
+    lg.setColor(COLOR_MULT_GOLD[1], COLOR_MULT_GOLD[2], COLOR_MULT_GOLD[3])
+    lg.circle("fill", sCX, sCY, 9)
+    lg.setColor(0.18, 0.10, 0.02)
+    lg.setLineWidth(1.5)
+    lg.circle("line", sCX, sCY, 9)
+  end
   local mScale = 1.0
   if self.multBounce > 0 then
     local t = self.multBounce / 0.28
