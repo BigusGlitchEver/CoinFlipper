@@ -14,6 +14,7 @@
 
 local StateMachine = require("statemachine")
 local Items        = require("data.flip_items")
+local Services     = require("services")
 
 local C          = require("states.game.config")
 local F          = require("states.game.fonts")
@@ -24,24 +25,90 @@ local RenderHud  = require("states.game.render_hud")
 local RenderBoard = require("states.game.render_board")
 local CardPanel  = require("ui.card_panel")
 
-local lg = love.graphics
-local lm = love.mouse
+local lg    = love.graphics
+local lm    = love.mouse
+local floor = math.floor
+local min   = math.min
+local max   = math.max
+local sin   = math.sin
 
-local TOOL_CIRCLE   = C.TOOL_CIRCLE
-local TOOL_TRIANGLE = C.TOOL_TRIANGLE
-local COLOR_BG      = C.COLOR_BG
-local NUM_FLOORS    = C.NUM_FLOORS
-local PREVIEW_BTN_H = C.PREVIEW_BTN_H
+local TOOL_CIRCLE      = C.TOOL_CIRCLE
+local TOOL_TRIANGLE    = C.TOOL_TRIANGLE
+local COLOR_BG         = C.COLOR_BG
+local NUM_FLOORS       = C.NUM_FLOORS
+local PREVIEW_BTN_H    = C.PREVIEW_BTN_H
+local FLOOR_THRESHOLDS = C.FLOOR_THRESHOLDS
+
+-- Overlay geometry (fixed 800 × 600 window).
+local OVL_X, OVL_Y, OVL_W, OVL_H   = 180, 95,  440, 230
+local PRI_X, PRI_Y, PRI_W, PRI_H    = 315, 263, 170, 42   -- primary action btn
+local SEC_X, SEC_Y, SEC_W, SEC_H    = 180, 340, 440, 120  -- "play again?" box
+local YEA_X, YEA_Y, YEA_W, YEA_H   = 219, 408, 175, 38   -- "You Betcha!" btn
+local NAH_X, NAH_Y, NAH_W, NAH_H   = 406, 408, 175, 38   -- "Nah" btn
+
+-- Shared palette for overlays.
+local OVL_BG       = { 0.12, 0.10, 0.08, 0.93 }
+local OVL_BORDER   = { 0.70, 0.55, 0.20, 1.00 }
+local OVL_TITLE_WIN  = { 0.92, 0.80, 0.20 }
+local OVL_TITLE_LOSE = { 0.85, 0.22, 0.18 }
+local OVL_TITLE_NEXT = { 0.30, 0.80, 0.45 }
+local OVL_TEXT     = { 0.90, 0.88, 0.84 }
+local OVL_DIM      = { 0.60, 0.58, 0.54 }
+local BTN_PRI_BG   = { 0.22, 0.58, 0.22 }
+local BTN_PRI_HL   = { 0.30, 0.75, 0.30 }
+local BTN_SEC_BG   = { 0.28, 0.28, 0.28 }
+local BTN_NEG_BG   = { 0.50, 0.18, 0.14 }
+local BTN_TEXT     = { 1.00, 1.00, 1.00 }
+
+local function commaNum(n)
+  local s = tostring(floor(n or 0))
+  local result, i = "", #s
+  while i > 0 do
+    local from = max(1, i - 2)
+    result = s:sub(from, i) .. result
+    if from > 1 then result = "," .. result end
+    i = from - 1
+  end
+  return result
+end
 
 local Game = {}
 
 -- ---------- State lifecycle ----------
 
+-- Sets the run state and fires any one-time side-effects.
+local function setRunState(self, state)
+  self.runState = state
+  if state == "win" then
+    if Services.bank then Services.bank:deposit(self.runMarbles or 0) end
+  end
+end
+
+-- Draws a rounded-rect button and returns whether the mouse is over it.
+local function drawBtn(x, y, w, h, bgColor, label, font, mx, my)
+  local hovered = mx >= x and mx <= x + w and my >= y and my <= y + h
+  local c = hovered and BTN_PRI_HL or bgColor
+  lg.setColor(c[1], c[2], c[3])
+  lg.rectangle("fill", x, y, w, h, 7, 7)
+  lg.setColor(OVL_BORDER[1], OVL_BORDER[2], OVL_BORDER[3], 0.60)
+  lg.setLineWidth(1.5)
+  lg.rectangle("line", x, y, w, h, 7, 7)
+  lg.setFont(font)
+  local tw = font:getWidth(label)
+  local th = font:getHeight()
+  lg.setColor(BTN_TEXT[1], BTN_TEXT[2], BTN_TEXT[3])
+  lg.print(label, x + floor((w - tw) * 0.5), y + floor((h - th) * 0.5))
+  return hovered
+end
+
 function Game:enter(prev, houseName)
-  self.houseName  = houseName or "?"
-  self.floor      = 1
-  self.marbles    = 0
-  self.multiplier = 1
+  self.houseName    = houseName or "?"
+  self.floor        = 1
+  self.marbles      = 0
+  self.floorMarbles = 0
+  self.runMarbles   = 0
+  self.multiplier   = 1
+  self.runState     = "playing"
 
   L.rebuild()
 
@@ -146,6 +213,10 @@ end
 
 function Game:update(dt)
   self.toolX, self.toolY = lm.getPosition()
+
+  -- Freeze gameplay when an overlay is showing.
+  if self.runState ~= "playing" then return end
+
   self:_refreshHover()
   for i = 1, #self.coins do self.coins[i]:update(dt) end
   if self.activeCoin and not self.activeCoin.flipping then
@@ -168,6 +239,88 @@ function Game:update(dt)
   if self.bonusFlash  > 0 then self.bonusFlash  = self.bonusFlash  - dt end
   Spawn.replenishCoins(self)
   if self.cardPanel then self.cardPanel:update(dt) end
+
+  -- Check floor threshold.
+  local thresh = FLOOR_THRESHOLDS[self.floor] or 0
+  if (self.floorMarbles or 0) >= thresh then
+    if self.floor >= NUM_FLOORS then
+      setRunState(self, "win")
+    else
+      setRunState(self, "between")
+    end
+  end
+end
+
+function Game:drawOverlay()
+  local mx, my = lm.getPosition()
+  local rs = self.runState
+  F.ensure()
+
+  -- Dim the whole screen.
+  lg.setColor(0, 0, 0, 0.55)
+  lg.rectangle("fill", 0, 0, L.W, L.H)
+
+  -- ── Main info box ────────────────────────────────────────────────────
+  lg.setColor(OVL_BG[1], OVL_BG[2], OVL_BG[3], OVL_BG[4])
+  lg.rectangle("fill", OVL_X, OVL_Y, OVL_W, OVL_H, 10, 10)
+  lg.setColor(OVL_BORDER[1], OVL_BORDER[2], OVL_BORDER[3])
+  lg.setLineWidth(2.5)
+  lg.rectangle("line", OVL_X, OVL_Y, OVL_W, OVL_H, 10, 10)
+
+  local titleColor, titleText, bodyLine1, bodyLine2
+  if rs == "win" then
+    titleColor = OVL_TITLE_WIN
+    titleText  = "YOU WIN!"
+    bodyLine1  = "Run complete!  All floors cleared."
+    bodyLine2  = commaNum(self.runMarbles) .. " marbles banked."
+  elseif rs == "lose" then
+    titleColor = OVL_TITLE_LOSE
+    titleText  = "GAME OVER"
+    bodyLine1  = "Better luck next time."
+    bodyLine2  = commaNum(self.runMarbles) .. " marbles earned this run."
+  else -- between
+    titleColor = OVL_TITLE_NEXT
+    titleText  = "FLOOR " .. self.floor .. " CLEAR!"
+    bodyLine1  = "Floor " .. self.floor .. " target reached."
+    bodyLine2  = "Total so far: " .. commaNum(self.runMarbles) .. " marbles."
+  end
+
+  lg.setFont(F.LARGE)
+  lg.setColor(titleColor[1], titleColor[2], titleColor[3])
+  local tw = F.LARGE:getWidth(titleText)
+  lg.print(titleText, OVL_X + floor((OVL_W - tw) * 0.5), OVL_Y + 22)
+
+  lg.setFont(F.MEDIUM)
+  lg.setColor(OVL_TEXT[1], OVL_TEXT[2], OVL_TEXT[3])
+  lg.printf(bodyLine1, OVL_X + 20, OVL_Y + 90,  OVL_W - 40, "center")
+  lg.printf(bodyLine2, OVL_X + 20, OVL_Y + 118, OVL_W - 40, "center")
+
+  -- Primary action button.
+  local priLabel
+  if rs == "win" then
+    priLabel = "BACK TO MAP"
+  elseif rs == "lose" then
+    priLabel = "BACK TO MAP"
+  else
+    priLabel = "NEXT FLOOR"
+  end
+  drawBtn(PRI_X, PRI_Y, PRI_W, PRI_H, BTN_PRI_BG, priLabel, F.MEDIUM, mx, my)
+
+  -- ── "Play again?" box ────────────────────────────────────────────────
+  lg.setColor(OVL_BG[1], OVL_BG[2], OVL_BG[3], OVL_BG[4])
+  lg.rectangle("fill", SEC_X, SEC_Y, SEC_W, SEC_H, 10, 10)
+  lg.setColor(OVL_BORDER[1], OVL_BORDER[2], OVL_BORDER[3], 0.60)
+  lg.setLineWidth(1.5)
+  lg.rectangle("line", SEC_X, SEC_Y, SEC_W, SEC_H, 10, 10)
+
+  lg.setFont(F.MEDIUM)
+  lg.setColor(OVL_DIM[1], OVL_DIM[2], OVL_DIM[3])
+  lg.printf("Play this house again?", SEC_X, SEC_Y + 18, SEC_W, "center")
+
+  drawBtn(YEA_X, YEA_Y, YEA_W, YEA_H, BTN_PRI_BG, "You Betcha!",  F.MEDIUM, mx, my)
+  drawBtn(NAH_X, NAH_Y, NAH_W, NAH_H, BTN_NEG_BG, "Nah",          F.MEDIUM, mx, my)
+
+  lg.setColor(1, 1, 1, 1)
 end
 
 function Game:draw()
@@ -177,6 +330,9 @@ function Game:draw()
   -- Left notebook HUD, then the playing surface.
   RenderHud.draw(self)
   RenderBoard.draw(self)
+  if self.runState and self.runState ~= "playing" then
+    self:drawOverlay()
+  end
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -184,6 +340,42 @@ end
 
 function Game:mousepressed(x, y, button)
   if button ~= 1 then return end
+
+  -- ── Overlay click handling ────────────────────────────────────────────
+  local rs = self.runState
+  if rs and rs ~= "playing" then
+    -- Primary action button.
+    if x >= PRI_X and x <= PRI_X + PRI_W and y >= PRI_Y and y <= PRI_Y + PRI_H then
+      if rs == "between" then
+        -- Advance to next floor.
+        self.floor        = self.floor + 1
+        self.floorMarbles = 0
+        self.marbles      = 0
+        self.multiplier   = 1
+        self.hotStreak    = 0
+        self.bonusReady   = false
+        self.coins        = Spawn.scatterBoard()
+        self.runState     = "playing"
+      else
+        -- Win or lose → back to map.
+        StateMachine.switch("map")
+      end
+      return
+    end
+    -- "You Betcha!" — restart this house.
+    if x >= YEA_X and x <= YEA_X + YEA_W and y >= YEA_Y and y <= YEA_Y + YEA_H then
+      Game:enter(nil, self.houseName)
+      return
+    end
+    -- "Nah" — go to map.
+    if x >= NAH_X and x <= NAH_X + NAH_W and y >= NAH_Y and y <= NAH_Y + NAH_H then
+      StateMachine.switch("map")
+      return
+    end
+    return  -- eat all other clicks while overlay is up
+  end
+
+  -- ── Normal gameplay clicks ────────────────────────────────────────────
   if x < L.panelW then
     local btnY = L.H - PREVIEW_BTN_H - 10   -- 10 = HUD pm constant
     if y >= btnY and y <= btnY + PREVIEW_BTN_H then

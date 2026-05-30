@@ -12,6 +12,19 @@ local max   = math.max
 local floor = math.floor
 local sin   = math.sin
 
+-- Format an integer with comma separators, e.g. 12345 → "12,345".
+local function commaNum(n)
+  local s = tostring(floor(n))
+  local result, i = "", #s
+  while i > 0 do
+    local from = math.max(1, i - 2)
+    result = s:sub(from, i) .. result
+    if from > 1 then result = "," .. result end
+    i = from - 1
+  end
+  return result
+end
+
 local COLOR_HUD_BG      = C.COLOR_HUD_BG
 local COLOR_CARD_BG     = C.COLOR_CARD_BG
 local COLOR_CARD_BORDER = C.COLOR_CARD_BORDER
@@ -52,7 +65,7 @@ function M.draw(self)
   lg.setFont(F.SMALL)
   lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3])
   lg.print("FLOOR  " .. self.floor .. " / " .. NUM_FLOORS, cx + 10, cy + 38)
-  lg.print("NEXT:  " .. (FLOOR_THRESHOLDS[self.floor] or "?"), cx + 10, cy + 60)
+  lg.print("FLOOR TARGET: " .. commaNum(FLOOR_THRESHOLDS[self.floor] or 0), cx + 10, cy + 60)
   cy = cy + c1h + pm
 
   -- ── Card 2: Marble Progress ──────────────────────────────────────────
@@ -72,13 +85,13 @@ function M.draw(self)
   end
   lg.setFont(F.HUGE)
   lg.setColor(COLOR_CARD_VALUE[1], COLOR_CARD_VALUE[2], COLOR_CARD_VALUE[3])
-  lg.print(tostring(self.marbles), cx + 10, cy + 24)
+  lg.print(commaNum(self.runMarbles or 0), cx + 10, cy + 24)
   local barX   = cx + 10
   local barY   = cy + 82
   local barW   = cw - 32
   local barH   = 14
   local thresh = FLOOR_THRESHOLDS[self.floor] or 1
-  local frac   = math.min(self.marbles / thresh, 1)
+  local frac   = math.min((self.floorMarbles or 0) / thresh, 1)
   lg.setColor(COLOR_BAR_BG[1], COLOR_BAR_BG[2], COLOR_BAR_BG[3])
   lg.rectangle("fill", barX, barY, barW, barH, 5, 5)
   if frac > 0 then

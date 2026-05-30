@@ -147,8 +147,10 @@ local function resolveFlip(self, coin, landingX, landingY, depth)
   if landingX >= tx + z3 and landingX <= tx + tw - z3 and
      landingY >= ty + z3 and landingY <= ty + th - z3 then
     local gain = max(1, floor(POINTS.red * tierMult * self.multiplier * chainMult * scoreMult))
-    self.marbles    = self.marbles + gain
-    self.multiplier = self.multiplier + 1
+    self.marbles      = self.marbles + gain
+    self.floorMarbles = (self.floorMarbles or 0) + gain
+    self.runMarbles   = (self.runMarbles   or 0) + gain
+    self.multiplier   = self.multiplier + 1
     return "red", gain
   end
 
@@ -156,8 +158,10 @@ local function resolveFlip(self, coin, landingX, landingY, depth)
   if landingX >= tx + z2 and landingX <= tx + tw - z2 and
      landingY >= ty + z2 and landingY <= ty + th - z2 then
     local gain = max(1, floor(POINTS.yellow * tierMult * self.multiplier * chainMult * scoreMult))
-    self.marbles    = self.marbles + gain
-    self.multiplier = self.multiplier + 1
+    self.marbles      = self.marbles + gain
+    self.floorMarbles = (self.floorMarbles or 0) + gain
+    self.runMarbles   = (self.runMarbles   or 0) + gain
+    self.multiplier   = self.multiplier + 1
     return "yellow", gain
   end
 
@@ -165,8 +169,10 @@ local function resolveFlip(self, coin, landingX, landingY, depth)
   if landingX >= tx + z1 and landingX <= tx + tw - z1 and
      landingY >= ty + z1 and landingY <= ty + th - z1 then
     local gain = max(1, floor(POINTS.blue * tierMult * self.multiplier * chainMult * scoreMult))
-    self.marbles    = self.marbles + gain
-    self.multiplier = self.multiplier + 1
+    self.marbles      = self.marbles + gain
+    self.floorMarbles = (self.floorMarbles or 0) + gain
+    self.runMarbles   = (self.runMarbles   or 0) + gain
+    self.multiplier   = self.multiplier + 1
     return "blue", gain
   end
 
