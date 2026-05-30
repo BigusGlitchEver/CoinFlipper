@@ -164,10 +164,8 @@ function M.spawnCoinsAt(self, x, y, count, tier)
     local r   = sqrt(lrandom()) * 6
     local nx  = x + cos(ang) * r
     local ny  = y + sin(ang) * r
-    -- +1 px inset: keeps start strictly inside launch bounds so the
-    -- wall-crossing time t = (bx - ox)/(ca*power) is always > 0.
-    nx = max(bx + cr + 1, min(bx + bw - cr - 1, nx))
-    ny = max(by + cr + 1, min(by + bh - cr - 1, ny))
+    nx = max(bx + cr, min(bx + bw - cr, nx))
+    ny = max(by + cr, min(by + bh - cr, ny))
     local c = Coin(nx, ny, cr)
     c.tier      = tier or 0
     c.isSpawned = true   -- spawned coins never produce further multiplication

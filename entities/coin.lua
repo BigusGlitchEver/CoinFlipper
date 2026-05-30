@@ -187,6 +187,16 @@ function Coin:launch(angle, power, arc, item, callback, bx, by, bw, bh)
   local sa = sin(angle)
   local ox, oy = self.x, self.y
 
+  -- Keep the start strictly within the bounce bounds. A previous bounce
+  -- clamps a coin's landing exactly onto a wall (ox == bx), and placement can
+  -- leave it a hair past one; without this the crossing-time math below yields
+  -- t <= 0, the wall is missed, and the coin escapes the board. Pulling the
+  -- start back inside makes t well-defined for every launch.
+  if bx then
+    if ox < bx then ox = bx elseif ox > bx + bw then ox = bx + bw end
+    if oy < by then oy = by elseif oy > by + bh then oy = by + bh end
+  end
+
   -- Tentative landing (deterministic).
   local lx = ox + ca * power
   local ly = oy + sa * power
@@ -197,13 +207,14 @@ function Coin:launch(angle, power, arc, item, callback, bx, by, bw, bh)
   self._tSplit = nil
 
   if bx and (lx < bx or lx > bx + bw or ly < by or ly > by + bh) then
-    -- Find smallest t in (0,1] where the ray first crosses a wall.
+    -- Find smallest t in [0,1] where the ray first crosses a wall. t == 0 is
+    -- valid: a coin resting against a wall reflects immediately.
     local tMin      = 2          -- sentinel > 1
     local wallHoriz = false      -- true = top/bottom, false = left/right
 
     if ca < 0 then          -- left wall x = bx
       local t = (bx - ox) / (ca * power)
-      if t > 0 and t <= 1 then
+      if t >= 0 and t <= 1 then
         local hy = oy + sa * power * t
         if hy >= by and hy <= by + bh and t < tMin then
           tMin = t; wallHoriz = false
@@ -211,7 +222,7 @@ function Coin:launch(angle, power, arc, item, callback, bx, by, bw, bh)
       end
     elseif ca > 0 then      -- right wall x = bx + bw
       local t = (bx + bw - ox) / (ca * power)
-      if t > 0 and t <= 1 then
+      if t >= 0 and t <= 1 then
         local hy = oy + sa * power * t
         if hy >= by and hy <= by + bh and t < tMin then
           tMin = t; wallHoriz = false
@@ -220,7 +231,7 @@ function Coin:launch(angle, power, arc, item, callback, bx, by, bw, bh)
     end
     if sa < 0 then          -- top wall y = by
       local t = (by - oy) / (sa * power)
-      if t > 0 and t <= 1 then
+      if t >= 0 and t <= 1 then
         local hx = ox + ca * power * t
         if hx >= bx and hx <= bx + bw and t < tMin then
           tMin = t; wallHoriz = true
@@ -228,7 +239,7 @@ function Coin:launch(angle, power, arc, item, callback, bx, by, bw, bh)
       end
     elseif sa > 0 then      -- bottom wall y = by + bh
       local t = (by + bh - oy) / (sa * power)
-      if t > 0 and t <= 1 then
+      if t >= 0 and t <= 1 then
         local hx = ox + ca * power * t
         if hx >= bx and hx <= bx + bw and t < tMin then
           tMin = t; wallHoriz = true
