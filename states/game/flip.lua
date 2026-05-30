@@ -210,10 +210,11 @@ fireFlip = function(self, coin, contactX, contactY, depth)
     end
 
     -- Spawn extra coins only when:
-    --   • this is a chain hit (depth > 0), not the player's direct flip
+    --   • this is a chain hit within the spawn window (0 < depth <= cap)
     --   • the activated coin is an egg (only eggs split)
     --   • the coin itself wasn't already spawned (spawned coins don't multiply)
-    if depth > 0 and coin.itemType == "egg" and not coin.isSpawned then
+    if depth > 0 and depth <= CHAIN_SPAWN_MAX_DEPTH
+       and coin.itemType == "egg" and not coin.isSpawned then
       local spawned = Spawn.spawnCoinsAt(self, lx, ly, depth, coin.tier or 0)
       -- Each spawned coin immediately flies out in the same direction and
       -- distance the egg just travelled — same angle, power, arc, and item.
@@ -226,9 +227,10 @@ fireFlip = function(self, coin, contactX, contactY, depth)
           elseif szone == "white_miss" then
             sc.used = false
           end
-          if depth < CHAIN_SPAWN_MAX_DEPTH then
-            tryChainFlip(self, sc, slx, sly, depth + 1)
-          end
+          -- Spawned coins CAN knock other coins when they land; isSpawned=true
+          -- already prevents those knocked coins from re-multiplying.
+          -- No depth guard here — the spawn gate above uses the upper bound.
+          tryChainFlip(self, sc, slx, sly, depth + 1)
         end, L.boardX, L.boardY, L.boardW, L.boardH)
       end
     end
