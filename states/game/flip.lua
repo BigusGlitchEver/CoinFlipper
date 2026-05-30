@@ -245,9 +245,6 @@ M.fireFlip = function(self, coin, x, y, depth) return fireFlip(self, coin, x, y,
 
 tryChainFlip = function(self, landingCoin, lx, ly, depth)
   local lr = landingCoin.radius
-  local a  = landingCoin.launchAngle or 0
-  local ca = cos(a)
-  local sa = sin(a)
   for i = 1, #self.coins do
     local target = self.coins[i]
     if target ~= landingCoin
@@ -257,20 +254,15 @@ tryChainFlip = function(self, landingCoin, lx, ly, depth)
       local d2   = dx * dx + dy * dy
       local sumR = lr + target.radius
       if d2 < (sumR * sumR) then
-        local edgeX = lx + ca * lr
-        local edgeY = ly + sa * lr
-        local edx = edgeX - target.x
-        local edy = edgeY - target.y
-        local tr  = target.radius
-        if (edx * edx + edy * edy) >= (tr * tr) then
-          local d = sqrt(d2)
-          if d > 0 then
-            local invD = 1 / d
-            edgeX = lx + dx * invD * lr
-            edgeY = ly + dy * invD * lr
-          end
-        end
-        fireFlip(self, target, edgeX, edgeY, depth)
+        -- Contact point: landing coin's rim in the direction of the target.
+        -- This is collinear with both centres, so the direction fireFlip
+        -- derives (atan2 from contact → target centre) is always the true
+        -- centre-to-centre direction — same rule as a player flip.
+        local d    = sqrt(d2)
+        local invD = 1 / d
+        local contactX = lx + dx * invD * lr
+        local contactY = ly + dy * invD * lr
+        fireFlip(self, target, contactX, contactY, depth)
       end
     end
   end
