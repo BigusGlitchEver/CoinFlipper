@@ -231,7 +231,8 @@ fireFlip = function(self, coin, contactX, contactY, depth)
           -- already prevents those knocked coins from re-multiplying.
           -- No depth guard here — the spawn gate above uses the upper bound.
           tryChainFlip(self, sc, slx, sly, depth + 1)
-        end, L.boardX, L.boardY, L.boardW, L.boardH)
+        end, L.boardX + sc.radius, L.boardY + sc.radius,
+             L.boardW - sc.radius * 2, L.boardH - sc.radius * 2)
       end
     end
 
@@ -241,7 +242,8 @@ fireFlip = function(self, coin, contactX, contactY, depth)
       tryChainFlip(self, coin, lx, ly, depth + 1)
     end
     if depth == 0 then self.activeCoin = nil end
-  end, L.boardX, L.boardY, L.boardW, L.boardH)
+  end, L.boardX + coin.radius, L.boardY + coin.radius,
+       L.boardW - coin.radius * 2, L.boardH - coin.radius * 2)
 end
 M.fireFlip = function(self, coin, x, y, depth) return fireFlip(self, coin, x, y, depth) end
 
