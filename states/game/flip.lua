@@ -46,6 +46,10 @@ M.resolveShot = resolveShot
 local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriangle)
   local count = 0
   if isTriangle then
+    -- Forgiveness margin: a tip grabs the nearest coin whose disc it touches
+    -- OR comes within one base-coin radius of, so the triangle can engage any
+    -- coin from any side without having to land a tip exactly inside it.
+    local grab = L.coinR
     for d = 1, 3 do
       local tx = toolX + TRI_UX[d] * toolR
       local ty = toolY + TRI_UY[d] * toolR
@@ -56,8 +60,8 @@ local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriang
           local dx = tx - coin.x
           local dy = ty - coin.y
           local d2 = dx*dx + dy*dy
-          local cr = coin.radius
-          if d2 < cr*cr and d2 < bestD2 then
+          local reach = coin.radius + grab
+          if d2 < reach*reach and d2 < bestD2 then
             bestCoin = coin
             bestD2   = d2
           end

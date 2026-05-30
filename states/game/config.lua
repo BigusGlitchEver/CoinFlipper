@@ -48,13 +48,15 @@ M.DOT_COLORS_DARK = {
 M.TOOL_CIRCLE   = "circle"
 M.TOOL_TRIANGLE = "triangle"
 
--- Triangle tip unit vectors (equilateral, tip pointing up).
+-- Triangle tip offset vectors (scaled by toolR at use). Symmetric isosceles
+-- with the SHARP apex pointing straight up. Vertices are vertically centred on
+-- the cursor so the tool sits balanced under the pointer.
 local TRI_UX = {}
 local TRI_UY = {}
 do
-  TRI_UX[1] =  0.159;  TRI_UY[1] = -0.630  -- top tip
-  TRI_UX[2] =  0.830;  TRI_UY[2] =  0.576  -- bottom-right tip
-  TRI_UX[3] = -0.833;  TRI_UY[3] =  0.707  -- bottom-left tip
+  TRI_UX[1] =  0.000;  TRI_UY[1] = -1.080  -- top tip (sharp, straight up)
+  TRI_UX[2] =  0.720;  TRI_UY[2] =  0.540  -- bottom-right tip
+  TRI_UX[3] = -0.720;  TRI_UY[3] =  0.540  -- bottom-left tip
 end
 M.TRI_UX = TRI_UX
 M.TRI_UY = TRI_UY
