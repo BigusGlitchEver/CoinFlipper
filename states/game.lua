@@ -48,6 +48,12 @@ local SEC_X, SEC_Y, SEC_W, SEC_H    = 180, 340, 440, 120  -- "play again?" box (
 local YEA_X, YEA_Y, YEA_W, YEA_H   = 219, 408, 175, 38   -- "You Betcha!" btn
 local NAH_X, NAH_Y, NAH_W, NAH_H   = 406, 408, 175, 38   -- "Nah" btn
 
+-- DEBUG floor-jump arrows (bottom-right of the board). ◄ = previous floor
+-- layout, ► = win the current stage (shows the clear/win screen).
+local DBG_W, DBG_H = 30, 26
+local DBG_PREV_X, DBG_PREV_Y = 705, 566
+local DBG_NEXT_X, DBG_NEXT_Y = 742, 566
+
 -- Shared palette for overlays.
 local OVL_BG       = { 0.12, 0.10, 0.08, 0.93 }
 local OVL_BORDER   = { 0.70, 0.55, 0.20, 1.00 }
@@ -85,6 +91,37 @@ local function setRunState(self, state)
     if Services.bank then Services.bank:deposit(self.runMarbles or 0) end
     Map.markConquered(self.houseName)
   end
+end
+
+-- DEBUG: draw the two floor-jump arrow buttons in the board's bottom-right.
+local function drawDebugArrows()
+  lg.setFont(F.SMALL)
+  lg.setColor(1, 1, 1, 0.45)
+  lg.printf("DEBUG FLOOR", DBG_PREV_X - 60, DBG_PREV_Y - 14, DBG_W + 127, "right")
+  -- ◄ previous
+  lg.setColor(0, 0, 0, 0.40)
+  lg.rectangle("fill", DBG_PREV_X, DBG_PREV_Y, DBG_W, DBG_H, 4, 4)
+  lg.setColor(1, 1, 1, 0.85)
+  local pcx, pcy = DBG_PREV_X + DBG_W * 0.5, DBG_PREV_Y + DBG_H * 0.5
+  lg.polygon("fill", pcx + 6, pcy - 7, pcx + 6, pcy + 7, pcx - 7, pcy)
+  -- ► next (= win current stage)
+  lg.setColor(0, 0, 0, 0.40)
+  lg.rectangle("fill", DBG_NEXT_X, DBG_NEXT_Y, DBG_W, DBG_H, 4, 4)
+  lg.setColor(1, 1, 1, 0.85)
+  local ncx, ncy = DBG_NEXT_X + DBG_W * 0.5, DBG_NEXT_Y + DBG_H * 0.5
+  lg.polygon("fill", ncx - 6, ncy - 7, ncx - 6, ncy + 7, ncx + 7, ncy)
+end
+
+-- DEBUG: reset the board for a fresh floor (used by the prev-floor arrow).
+local function resetFloor(self)
+  self.floorMarbles = 0
+  self.marbles      = 0
+  self.multiplier   = 1
+  self.hotStreak    = 0
+  self.bonusReady   = false
+  self.flipsLeft    = FLIPS_PER_FLOOR
+  self.coins        = Spawn.scatterBoard()
+  self.runState     = "playing"
 end
 
 -- Draws a rounded-rect button and returns whether the mouse is over it.
@@ -347,7 +384,9 @@ function Game:draw()
   -- Left notebook HUD, then the playing surface.
   RenderHud.draw(self)
   RenderBoard.draw(self)
-  if self.runState and self.runState ~= "playing" then
+  if self.runState == "playing" then
+    drawDebugArrows()
+  else
     self:drawOverlay()
   end
   lg.setColor(1, 1, 1, 1)
@@ -389,6 +428,24 @@ function Game:mousepressed(x, y, button)
       end
     end
     return  -- eat all other clicks while overlay is up
+  end
+
+  -- ── DEBUG floor-jump arrows ───────────────────────────────────────────
+  -- ► wins the current stage; ◄ jumps back to the previous floor's layout.
+  if x >= DBG_NEXT_X and x <= DBG_NEXT_X + DBG_W
+     and y >= DBG_NEXT_Y and y <= DBG_NEXT_Y + DBG_H then
+    if self.floor >= NUM_FLOORS then
+      setRunState(self, "win")
+    else
+      setRunState(self, "between")
+    end
+    return
+  end
+  if x >= DBG_PREV_X and x <= DBG_PREV_X + DBG_W
+     and y >= DBG_PREV_Y and y <= DBG_PREV_Y + DBG_H then
+    if self.floor > 1 then self.floor = self.floor - 1 end
+    resetFloor(self)
+    return
   end
 
   -- ── Normal gameplay clicks ────────────────────────────────────────────
