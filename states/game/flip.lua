@@ -79,18 +79,26 @@ local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriang
         local dx   = coin.x - toolX
         local dy   = coin.y - toolY
         local dist = sqrt(dx*dx + dy*dy)
-        if dist > 1 then
-          local rimDist = dist - toolR
-          if rimDist < 0 then rimDist = -rimDist end
-          if rimDist < coin.radius then
-            count = count + 1
-            local slot = outConflict[count]
-            local inv  = toolR / dist
-            slot.contactX = toolX + dx * inv
-            slot.contactY = toolY + dy * inv
-            slot.coin     = coin
-            if count == 6 then break end
-          end
+        -- Engage whenever the tool DISC overlaps the coin disc — rim graze
+        -- (dist ~ toolR + cr) all the way through to the tool fully covering
+        -- the coin (dist < toolR). No interior dead zone: the tool can touch
+        -- any point of any coin from any side, including coins pinned to a wall.
+        if dist > 1 and dist < toolR + coin.radius then
+          count = count + 1
+          local slot = outConflict[count]
+          -- Rim offset = how far the coin centre is from the tool's rim. The
+          -- contact sits on the coin's NEAR side (toward the tool), so the
+          -- launch direction (contact -> centre) always pushes the coin AWAY
+          -- from the tool. In the orbit zone (dist >= toolR) this point is
+          -- identical to the old toolR-projection; inside the tool it mirrors
+          -- to the near side instead of flipping the shot backwards.
+          local off = dist - toolR
+          if off < 0 then off = -off end
+          local f = off / dist
+          slot.contactX = coin.x - dx * f
+          slot.contactY = coin.y - dy * f
+          slot.coin     = coin
+          if count == 6 then break end
         end
       end
     end
