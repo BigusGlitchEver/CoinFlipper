@@ -126,6 +126,7 @@ local function resolveFlip(self, coin, landingX, landingY, depth)
   local tw, th    = L.targetW, L.targetH
   local tierMult  = Tiers[(coin.tier or 0) + 1].mult
   local chainMult = CHAIN_BONUS[depth or 0] or 1
+  local scoreMult = coin.scoreMult or 1  -- golden bonus coins are worth 5x
   local cr        = coin.radius  -- edge-based offset
 
   -- Off-board: full miss, chain resets.
@@ -145,7 +146,7 @@ local function resolveFlip(self, coin, landingX, landingY, depth)
   -- Red centre (innermost).
   if landingX >= tx + z3 and landingX <= tx + tw - z3 and
      landingY >= ty + z3 and landingY <= ty + th - z3 then
-    local gain = max(1, floor(POINTS.red * tierMult * self.multiplier * chainMult))
+    local gain = max(1, floor(POINTS.red * tierMult * self.multiplier * chainMult * scoreMult))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "red", gain
@@ -154,7 +155,7 @@ local function resolveFlip(self, coin, landingX, landingY, depth)
   -- Yellow band.
   if landingX >= tx + z2 and landingX <= tx + tw - z2 and
      landingY >= ty + z2 and landingY <= ty + th - z2 then
-    local gain = max(1, floor(POINTS.yellow * tierMult * self.multiplier * chainMult))
+    local gain = max(1, floor(POINTS.yellow * tierMult * self.multiplier * chainMult * scoreMult))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "yellow", gain
@@ -163,7 +164,7 @@ local function resolveFlip(self, coin, landingX, landingY, depth)
   -- Blue band.
   if landingX >= tx + z1 and landingX <= tx + tw - z1 and
      landingY >= ty + z1 and landingY <= ty + th - z1 then
-    local gain = max(1, floor(POINTS.blue * tierMult * self.multiplier * chainMult))
+    local gain = max(1, floor(POINTS.blue * tierMult * self.multiplier * chainMult * scoreMult))
     self.marbles    = self.marbles + gain
     self.multiplier = self.multiplier + 1
     return "blue", gain

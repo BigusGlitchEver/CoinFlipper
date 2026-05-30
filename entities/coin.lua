@@ -41,6 +41,10 @@ local TUMBLE_RATE = 18
 -- Outline stays #333333 across all tiers; fill comes from Tiers[tier+1].
 local COLOR_COIN_OUTLINE = { 0x33/255, 0x33/255, 0x33/255 }
 
+-- Golden coin: rare egg-spawned bonus coin (yellow, worth 5x). Overrides the
+-- tier fill so it reads as a distinct gold disc.
+local COLOR_COIN_GOLDEN = { 0xFF/255, 0xD4/255, 0x1F/255 }
+
 -- Pre-allocated star vertex buffer for easy_coin icon (10 points = 20 floats).
 -- Filled each draw call; avoids per-frame table creation.
 local STAR_VERTS = {}
@@ -345,7 +349,7 @@ function Coin:draw()
 
   -- Full opacity while airborne; faded only when resting and scored.
   local alpha = (self.used and not self.flipping) and 0.30 or 1.0
-  local fill  = Tiers[(self.tier or 0) + 1].color
+  local fill  = self.golden and COLOR_COIN_GOLDEN or Tiers[(self.tier or 0) + 1].color
 
   ensureSprites()
   local sprite = SPRITES and SPRITES[self.itemType]
