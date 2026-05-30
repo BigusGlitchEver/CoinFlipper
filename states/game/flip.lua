@@ -254,14 +254,18 @@ tryChainFlip = function(self, landingCoin, lx, ly, depth)
       local d2   = dx * dx + dy * dy
       local sumR = lr + target.radius
       if d2 < (sumR * sumR) then
-        -- Contact point: landing coin's rim in the direction of the target.
-        -- This is collinear with both centres, so the direction fireFlip
-        -- derives (atan2 from contact → target centre) is always the true
-        -- centre-to-centre direction — same rule as a player flip.
+        -- Contact point: computed from the TARGET'S side, not the landing
+        -- coin's. Using the landing coin's rim (lx + dx/d * lr) overshoots
+        -- when the coins land close together (d < lr), placing the contact
+        -- outside the target's disc and causing pressedBy to return nil.
+        -- A point 80% inside the target toward the landing coin is always
+        -- strictly inside the disc at any distance, including d ≈ 0, and
+        -- still resolves to the same centre-to-centre direction.
         local d    = sqrt(d2)
-        local invD = 1 / d
-        local contactX = lx + dx * invD * lr
-        local contactY = ly + dy * invD * lr
+        local invD = d > 0 and (1 / d) or 0
+        local tr   = target.radius
+        local contactX = target.x - dx * invD * tr * 0.8
+        local contactY = target.y - dy * invD * tr * 0.8
         fireFlip(self, target, contactX, contactY, depth)
       end
     end
