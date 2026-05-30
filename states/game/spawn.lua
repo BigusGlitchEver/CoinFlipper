@@ -167,12 +167,15 @@ function M.spawnCoinsAt(self, x, y, count, tier)
     nx = max(bx + cr, min(bx + bw - cr, nx))
     ny = max(by + cr, min(by + bh - cr, ny))
     local c = Coin(nx, ny, cr)
-    c.tier      = tier or 0
     c.isSpawned = true   -- spawned coins never produce further multiplication
-    -- 1-in-5 chance this bonus coin is GOLDEN: rendered yellow and worth 5x.
+    -- Default: tier 1 (blue fill, 0.75× mult). 1-in-5 chance the coin is
+    -- GOLDEN: tier 0 (full mult) + yellow override + 5× score bonus.
     if lrandom(5) == 1 then
+      c.tier      = 0
       c.golden    = true
       c.scoreMult = 5
+    else
+      c.tier = 1
     end
     self.coins[#self.coins + 1] = c
     _spawnBuf[i] = c
