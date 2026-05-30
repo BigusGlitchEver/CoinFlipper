@@ -39,6 +39,7 @@ local COLOR_BG         = C.COLOR_BG
 local NUM_FLOORS       = C.NUM_FLOORS
 local PREVIEW_BTN_H    = C.PREVIEW_BTN_H
 local FLOOR_THRESHOLDS = C.FLOOR_THRESHOLDS
+local FLIPS_PER_FLOOR  = C.FLIPS_PER_FLOOR
 
 -- Overlay geometry (fixed 800 × 600 window).
 local OVL_X, OVL_Y, OVL_W, OVL_H   = 180, 95,  440, 230
@@ -46,9 +47,6 @@ local PRI_X, PRI_Y, PRI_W, PRI_H    = 315, 263, 170, 42   -- primary action btn 
 local SEC_X, SEC_Y, SEC_W, SEC_H    = 180, 340, 440, 120  -- "play again?" box (win only)
 local YEA_X, YEA_Y, YEA_W, YEA_H   = 219, 408, 175, 38   -- "You Betcha!" btn
 local NAH_X, NAH_Y, NAH_W, NAH_H   = 406, 408, 175, 38   -- "Nah" btn
--- Lose state has two side-by-side buttons inside the main box.
-local LTR_X, LTR_Y, LTR_W, LTR_H   = 230, 263, 165, 42   -- "TRY AGAIN" btn
-local LBM_X, LBM_Y, LBM_W, LBM_H   = 405, 263, 175, 42   -- "BACK TO MAP" btn
 
 -- Shared palette for overlays.
 local OVL_BG       = { 0.12, 0.10, 0.08, 0.93 }
@@ -114,7 +112,7 @@ function Game:enter(prev, houseName)
   self.runMarbles   = 0
   self.multiplier   = 1
   self.runState     = "playing"
-  self.noCoinsTimer = 0
+  self.flipsLeft    = FLIPS_PER_FLOOR
 
   L.rebuild()
 
@@ -257,22 +255,17 @@ function Game:update(dt)
     return
   end
 
-  -- Lose check: if there are no clickable coins and nothing is in flight,
-  -- the player is stuck. Give a 1.5-second grace window (replenish may need
-  -- a frame to place coins after a chain reaction clears the board).
-  local anyFlipping, anyClickable = false, false
-  for i = 1, #self.coins do
-    local c = self.coins[i]
-    if c.flipping then anyFlipping = true end
-    if not c.flipping and not c.used then anyClickable = true end
-  end
-  if not anyFlipping and not anyClickable then
-    self.noCoinsTimer = (self.noCoinsTimer or 0) + dt
-    if self.noCoinsTimer >= 1.5 then
+  -- Lose check: out of flips and the floor target wasn't reached. Wait until
+  -- every coin from the last flip has settled (none flipping) so a final
+  -- chain reaction still gets its chance to push us over the threshold.
+  if (self.flipsLeft or 0) <= 0 then
+    local anyFlipping = false
+    for i = 1, #self.coins do
+      if self.coins[i].flipping then anyFlipping = true; break end
+    end
+    if not anyFlipping then
       setRunState(self, "lose")
     end
-  else
-    self.noCoinsTimer = 0
   end
 end
 
@@ -301,7 +294,7 @@ function Game:drawOverlay()
   elseif rs == "lose" then
     titleColor = OVL_TITLE_LOSE
     titleText  = "YOU LOSE"
-    bodyLine1  = "No more coins to flip."
+    bodyLine1  = "Out of flips before the target!"
     bodyLine2  = "You earned " .. commaNum(self.runMarbles) .. " marbles."
   else -- between
     titleColor = OVL_TITLE_NEXT
@@ -320,19 +313,12 @@ function Game:drawOverlay()
   lg.printf(bodyLine1, OVL_X + 20, OVL_Y + 90,  OVL_W - 40, "center")
   lg.printf(bodyLine2, OVL_X + 20, OVL_Y + 118, OVL_W - 40, "center")
 
-  if rs == "lose" then
-    -- Two side-by-side buttons: Try Again and Back to Map.
-    drawBtn(LTR_X, LTR_Y, LTR_W, LTR_H, BTN_PRI_BG, "TRY AGAIN",   F.MEDIUM, mx, my)
-    drawBtn(LBM_X, LBM_Y, LBM_W, LBM_H, BTN_NEG_BG, "BACK TO MAP", F.MEDIUM, mx, my)
-
-  elseif rs == "between" then
-    -- Single button: advance to next floor.
+  if rs == "between" then
+    -- Floor 1 or 2 cleared: just continue, no play-again prompt.
     drawBtn(PRI_X, PRI_Y, PRI_W, PRI_H, BTN_PRI_BG, "NEXT FLOOR", F.MEDIUM, mx, my)
 
-  else  -- "win" — full house cleared
-    drawBtn(PRI_X, PRI_Y, PRI_W, PRI_H, BTN_PRI_BG, "BACK TO MAP", F.MEDIUM, mx, my)
-
-    -- ── "Play again?" box (win only) ─────────────────────────────────
+  else  -- "win" (floor 3 cleared) OR "lose": offer to play the house again.
+    -- ── "Play again?" box ────────────────────────────────────────────
     lg.setColor(OVL_BG[1], OVL_BG[2], OVL_BG[3], OVL_BG[4])
     lg.rectangle("fill", SEC_X, SEC_Y, SEC_W, SEC_H, 10, 10)
     lg.setColor(OVL_BORDER[1], OVL_BORDER[2], OVL_BORDER[3], 0.60)
@@ -371,19 +357,7 @@ function Game:mousepressed(x, y, button)
   -- ── Overlay click handling ────────────────────────────────────────────
   local rs = self.runState
   if rs and rs ~= "playing" then
-    if rs == "lose" then
-      -- TRY AGAIN button.
-      if x >= LTR_X and x <= LTR_X + LTR_W and y >= LTR_Y and y <= LTR_Y + LTR_H then
-        Game:enter(nil, self.houseName)
-        return
-      end
-      -- BACK TO MAP button.
-      if x >= LBM_X and x <= LBM_X + LBM_W and y >= LBM_Y and y <= LBM_Y + LBM_H then
-        StateMachine.switch("map")
-        return
-      end
-
-    elseif rs == "between" then
+    if rs == "between" then
       -- NEXT FLOOR button.
       if x >= PRI_X and x <= PRI_X + PRI_W and y >= PRI_Y and y <= PRI_Y + PRI_H then
         self.floor        = self.floor + 1
@@ -392,24 +366,19 @@ function Game:mousepressed(x, y, button)
         self.multiplier   = 1
         self.hotStreak    = 0
         self.bonusReady   = false
-        self.noCoinsTimer = 0
+        self.flipsLeft    = FLIPS_PER_FLOOR
         self.coins        = Spawn.scatterBoard()
         self.runState     = "playing"
         return
       end
 
-    else  -- "win"
-      -- BACK TO MAP button.
-      if x >= PRI_X and x <= PRI_X + PRI_W and y >= PRI_Y and y <= PRI_Y + PRI_H then
-        StateMachine.switch("map")
-        return
-      end
-      -- "You Betcha!" — restart this house.
+    else  -- "win" or "lose": play-again choice
+      -- "You Betcha!" — restart this house from floor 1.
       if x >= YEA_X and x <= YEA_X + YEA_W and y >= YEA_Y and y <= YEA_Y + YEA_H then
         Game:enter(nil, self.houseName)
         return
       end
-      -- "Nah" — go to map.
+      -- "Nah" — go back to the map.
       if x >= NAH_X and x <= NAH_X + NAH_W and y >= NAH_Y and y <= NAH_Y + NAH_H then
         StateMachine.switch("map")
         return
@@ -430,6 +399,8 @@ function Game:mousepressed(x, y, button)
   self.toolX, self.toolY = x, y
   self:_refreshHover()
   if not self.armedDotX then return end              -- no coin in contact
+  if (self.flipsLeft or 0) <= 0 then return end       -- out of shots
+  self.flipsLeft = self.flipsLeft - 1
   Flip._fireFlip(self, self.hoveredCoin, self.armedDotX, self.armedDotY, 0)
 end
 

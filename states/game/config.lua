@@ -107,6 +107,7 @@ M.COLOR_BAR_FILL    = { 0.20, 0.56, 0.20 }  -- green progress fill
 M.COINS_PER_FLOOR     = 5
 M.COIN_RADIUS_AT_390W = 24                  -- spec: 48px DIAMETER at 390w
 M.FLOOR_THRESHOLDS    = { [1] = 2000, [2] = 5000, [3] = 10000 }
+M.FLIPS_PER_FLOOR     = 25   -- shots allowed per floor; out of flips = lose
 M.NUM_FLOORS          = 3
 M.POINTS              = { red = 3, yellow = 2, blue = 1 }  -- zone point values
 M.CHAIN_BONUS         = { [0] = 1, [1] = 2, [2] = 10, [3] = 100 }

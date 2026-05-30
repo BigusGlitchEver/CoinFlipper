@@ -65,6 +65,7 @@ function M.draw(self)
   lg.setFont(F.SMALL)
   lg.setColor(COLOR_CARD_LABEL[1], COLOR_CARD_LABEL[2], COLOR_CARD_LABEL[3])
   lg.print("FLOOR  " .. self.floor .. " / " .. NUM_FLOORS, cx + 10, cy + 38)
+  lg.printf("FLIPS: " .. (self.flipsLeft or 0), cx, cy + 38, cw - 10, "right")
   lg.print("FLOOR TARGET: " .. commaNum(FLOOR_THRESHOLDS[self.floor] or 0), cx + 10, cy + 60)
   cy = cy + c1h + pm
 
