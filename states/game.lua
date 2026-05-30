@@ -241,7 +241,6 @@ function Game:update(dt)
   if self.multBounce  > 0 then self.multBounce  = self.multBounce  - dt end
   if self.scoreFlash  > 0 then self.scoreFlash  = self.scoreFlash  - dt end
   if self.bonusFlash  > 0 then self.bonusFlash  = self.bonusFlash  - dt end
-  Spawn.replenishCoins(self)
   if self.cardPanel then self.cardPanel:update(dt) end
 
   -- Check floor threshold (win / advance).
