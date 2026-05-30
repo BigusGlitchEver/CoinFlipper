@@ -142,30 +142,37 @@ function M.replenishCoins(self)
   end
 end
 
--- spawnCoinsAt: called from flip.lua after a chain-activated coin lands.
--- Spawns `count` new coins within a 30px radius of (x, y), each inheriting
--- `tier`. Coins are appended to self.coins and behave identically to any other
--- board coin — fully scoreable and chain-capable.
+-- Module-level buffer so spawnCoinsAt never allocates inside its loop.
+-- Safe for reuse because spawning is always sequential (never nested).
+local _spawnBuf = {}
+
+-- spawnCoinsAt: creates `count` coins starting at (x, y) and returns them so
+-- the caller (flip.lua) can immediately launch each one. Coins are placed with
+-- a tiny (≤6px) scatter so they don't perfectly overlap at the pop point.
+-- Returns the module-level _spawnBuf — caller must use the values immediately.
 function M.spawnCoinsAt(self, x, y, count, tier)
-  if count <= 0 then return end
-  local cr  = L.coinR                          -- base coin radius
+  -- Clear the reuse buffer without allocating a new table.
+  for i = 1, #_spawnBuf do _spawnBuf[i] = nil end
+
+  if count <= 0 then return _spawnBuf end
+  local cr  = L.coinR
   local bx  = L.boardX;  local bw = L.boardW
   local by  = L.boardY;  local bh = L.boardH
-  local rad = 30                               -- scatter radius around landing
   for i = 1, count do
-    -- Uniform distribution within a circle: random angle × sqrt-scaled radius.
+    -- Tiny scatter so coins don't perfectly stack at the pop point.
     local ang = lrandom() * 2 * pi
-    local r   = sqrt(lrandom()) * rad
+    local r   = sqrt(lrandom()) * 6
     local nx  = x + cos(ang) * r
     local ny  = y + sin(ang) * r
-    -- Clamp inside board so coins don't appear outside the frame.
-    nx = max(bx + cr, nx);  nx = max(bx + cr, min(bx + bw - cr, nx))
-    ny = max(by + cr, ny);  ny = max(by + cr, min(by + bh - cr, ny))
+    nx = max(bx + cr, min(bx + bw - cr, nx))
+    ny = max(by + cr, min(by + bh - cr, ny))
     local c = Coin(nx, ny, cr)
     c.tier      = tier or 0
     c.isSpawned = true   -- spawned coins never produce further multiplication
     self.coins[#self.coins + 1] = c
+    _spawnBuf[i] = c
   end
+  return _spawnBuf
 end
 
 return M

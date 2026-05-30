@@ -214,7 +214,23 @@ fireFlip = function(self, coin, contactX, contactY, depth)
     --   • the activated coin is an egg (only eggs split)
     --   • the coin itself wasn't already spawned (spawned coins don't multiply)
     if depth > 0 and coin.itemType == "egg" and not coin.isSpawned then
-      Spawn.spawnCoinsAt(self, lx, ly, depth, coin.tier or 0)
+      local spawned = Spawn.spawnCoinsAt(self, lx, ly, depth, coin.tier or 0)
+      -- Each spawned coin immediately flies out in the same direction and
+      -- distance the egg just travelled — same angle, power, arc, and item.
+      for si = 1, #spawned do
+        local sc = spawned[si]
+        sc:launch(angle, power, arc, item, function(slx, sly)
+          local szone = resolveFlip(self, sc, slx, sly, depth)
+          if szone == "red" or szone == "yellow" or szone == "blue" then
+            sc.used = true
+          elseif szone == "white_miss" then
+            sc.used = false
+          end
+          if depth < CHAIN_SPAWN_MAX_DEPTH then
+            tryChainFlip(self, sc, slx, sly, depth + 1)
+          end
+        end, L.boardX, L.boardY, L.boardW, L.boardH)
+      end
     end
 
     -- Chain reaction: stop triggering new chains at the cap depth so the
