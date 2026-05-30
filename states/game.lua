@@ -254,17 +254,22 @@ function Game:update(dt)
     return
   end
 
-  -- Lose check: out of flips and the floor target wasn't reached. Wait until
-  -- every coin from the last flip has settled (none flipping) so a final
-  -- chain reaction still gets its chance to push us over the threshold.
-  if (self.flipsLeft or 0) <= 0 then
-    local anyFlipping = false
-    for i = 1, #self.coins do
-      if self.coins[i].flipping then anyFlipping = true; break end
+  -- Lose check: the player has no moves left. We wait until every coin has
+  -- settled (nothing still flipping) so a final chain reaction gets its
+  -- chance to push us over the threshold first. Then, if there are no
+  -- clickable coins remaining (every coin is in its Done/used state) OR the
+  -- flip budget is spent, the floor is lost.
+  local anyFlipping, anyClickable = false, false
+  for i = 1, #self.coins do
+    local c = self.coins[i]
+    if c.flipping then
+      anyFlipping = true
+    elseif not c.used then
+      anyClickable = true
     end
-    if not anyFlipping then
-      setRunState(self, "lose")
-    end
+  end
+  if not anyFlipping and (not anyClickable or (self.flipsLeft or 0) <= 0) then
+    setRunState(self, "lose")
   end
 end
 
@@ -293,7 +298,7 @@ function Game:drawOverlay()
   elseif rs == "lose" then
     titleColor = OVL_TITLE_LOSE
     titleText  = "YOU LOSE"
-    bodyLine1  = "Out of flips before the target!"
+    bodyLine1  = "Out of coins before the target!"
     bodyLine2  = "You earned " .. commaNum(self.runMarbles) .. " marbles."
   else -- between
     titleColor = OVL_TITLE_NEXT
