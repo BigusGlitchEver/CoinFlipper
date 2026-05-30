@@ -19,6 +19,14 @@ local floor = math.floor
 local TRI_UX             = C.TRI_UX
 local TRI_UY             = C.TRI_UY
 local POINTS             = C.POINTS
+
+-- Map a zone's point value back to the zone-name string the rest of the flip
+-- path (fireFlip scored/used logic, tests) expects.
+local POINTS_TO_ZONE = {
+  [POINTS.red]    = "red",
+  [POINTS.yellow] = "yellow",
+  [POINTS.blue]   = "blue",
+}
 local CHAIN_BONUS        = C.CHAIN_BONUS
 local CHAIN_SPAWN_MAX_DEPTH = C.CHAIN_SPAWN_MAX_DEPTH
 
@@ -122,8 +130,6 @@ M.findPressedCoin = findPressedCoin
 local function resolveFlip(self, coin, landingX, landingY, depth)
   local bx, by    = L.boardX, L.boardY
   local bw, bh    = L.boardW, L.boardH
-  local tx, ty    = L.targetX, L.targetY
-  local tw, th    = L.targetW, L.targetH
   local tierMult  = Tiers[(coin.tier or 0) + 1].mult
   local chainMult = CHAIN_BONUS[depth or 0] or 1
   local scoreMult = coin.scoreMult or 1  -- golden bonus coins are worth 5x
@@ -137,46 +143,25 @@ local function resolveFlip(self, coin, landingX, landingY, depth)
     return "off_board_miss", 0
   end
 
-  -- Edge-adjusted zone insets: the zone triggers when the coin's rim reaches
-  -- the painted line, i.e. inset shrinks by the coin radius (clamped to >= 0).
-  local z1 = max(0, L.zone1 - cr)
-  local z2 = max(0, L.zone2 - cr)
-  local z3 = max(0, L.zone3 - cr)
-
-  -- Red centre (innermost).
-  if landingX >= tx + z3 and landingX <= tx + tw - z3 and
-     landingY >= ty + z3 and landingY <= ty + th - z3 then
-    local gain = max(1, floor(POINTS.red * tierMult * self.multiplier * chainMult * scoreMult))
-    self.marbles      = self.marbles + gain
-    self.floorMarbles = (self.floorMarbles or 0) + gain
-    self.runMarbles   = (self.runMarbles   or 0) + gain
-    self.multiplier   = self.multiplier + 1
-    return "red", gain
+  -- Data-driven zones. Scanned in REVERSE so the innermost / highest-points
+  -- zone (listed last per island) wins. Detection is edge-based: a zone
+  -- registers the moment any part of the coin's disc overlaps the rect, so the
+  -- rect is grown by the coin radius (cr) on every side.
+  local zones = L.zones
+  for i = #zones, 1, -1 do
+    local z = zones[i]
+    if landingX >= z.x - cr and landingX <= z.x + z.w + cr and
+       landingY >= z.y - cr and landingY <= z.y + z.h + cr then
+      local gain = max(1, floor(z.points * tierMult * self.multiplier * chainMult * scoreMult))
+      self.marbles      = self.marbles + gain
+      self.floorMarbles = (self.floorMarbles or 0) + gain
+      self.runMarbles   = (self.runMarbles   or 0) + gain
+      self.multiplier   = self.multiplier + 1
+      return POINTS_TO_ZONE[z.points] or "blue", gain
+    end
   end
 
-  -- Yellow band.
-  if landingX >= tx + z2 and landingX <= tx + tw - z2 and
-     landingY >= ty + z2 and landingY <= ty + th - z2 then
-    local gain = max(1, floor(POINTS.yellow * tierMult * self.multiplier * chainMult * scoreMult))
-    self.marbles      = self.marbles + gain
-    self.floorMarbles = (self.floorMarbles or 0) + gain
-    self.runMarbles   = (self.runMarbles   or 0) + gain
-    self.multiplier   = self.multiplier + 1
-    return "yellow", gain
-  end
-
-  -- Blue band.
-  if landingX >= tx + z1 and landingX <= tx + tw - z1 and
-     landingY >= ty + z1 and landingY <= ty + th - z1 then
-    local gain = max(1, floor(POINTS.blue * tierMult * self.multiplier * chainMult * scoreMult))
-    self.marbles      = self.marbles + gain
-    self.floorMarbles = (self.floorMarbles or 0) + gain
-    self.runMarbles   = (self.runMarbles   or 0) + gain
-    self.multiplier   = self.multiplier + 1
-    return "blue", gain
-  end
-
-  -- White outer strip: on-board but no score. Coin stays live.
+  -- White outer strip / dead zone: on-board but no score. Coin stays live.
   if coin.tier < 3 then coin.tier = coin.tier + 1 end
   return "white_miss", 0
 end

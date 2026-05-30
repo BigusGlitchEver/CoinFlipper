@@ -128,4 +128,62 @@ M.PREVIEW_BTN_H       = 34   -- height of the preview-toggle button in the sideb
 M.CHAIN_SPAWN_MAX_DEPTH = 1  -- chain reactions cap at this depth (spawn + chain stop)
 M.TOOL_HL_HALF        = 32 * pi / 180   -- circle highlight arc half-width
 
+-- ---------- Data-driven per-floor zone layouts ----------
+-- Each zone def is a proportional rect inside the scoring TARGET area:
+--   xPct/yPct/wPct/hPct are fractions (0..1) of targetW/targetH.
+--   points  -> POINTS value, also maps to a returned zone-name in flip.lua.
+--   color   -> fill color (single source of truth = the COLOR_ZONE_* above).
+-- Zones are listed outermost-first (blue, yellow, red) per island so that
+-- render_board draws them in painter order and flip.lua scans them in reverse
+-- (innermost/highest-points first).
+--
+-- Dead zones are purely cosmetic grey tints painted BEFORE the scoring zones;
+-- they carry no scoring rect, so a coin landing there simply white-misses.
+M.COLOR_DEAD = { 0xCC/255, 0xCC/255, 0xCC/255 }  -- grey dead-zone tint
+M.DEAD_ALPHA = 0.35
+
+local FLOOR_ZONES = {
+  -- Floor 1: GRANDMA'S TABLE — single centered concentric target.
+  [1] = {
+    zones = {
+      { points = M.POINTS.blue,   color = M.COLOR_ZONE_BLUE,   xPct = 0.02, yPct = 0.03, wPct = 0.96, hPct = 0.94 },
+      { points = M.POINTS.yellow, color = M.COLOR_ZONE_YELLOW, xPct = 0.12, yPct = 0.12, wPct = 0.76, hPct = 0.76 },
+      { points = M.POINTS.red,    color = M.COLOR_ZONE_RED,    xPct = 0.26, yPct = 0.26, wPct = 0.48, hPct = 0.48 },
+    },
+    dead = {},
+  },
+  -- Floor 2: THE RUNNER — right-biased target, left 28% is dead.
+  [2] = {
+    zones = {
+      { points = M.POINTS.blue,   color = M.COLOR_ZONE_BLUE,   xPct = 0.28, yPct = 0.03, wPct = 0.70, hPct = 0.94 },
+      { points = M.POINTS.yellow, color = M.COLOR_ZONE_YELLOW, xPct = 0.40, yPct = 0.12, wPct = 0.52, hPct = 0.76 },
+      { points = M.POINTS.red,    color = M.COLOR_ZONE_RED,    xPct = 0.58, yPct = 0.22, wPct = 0.34, hPct = 0.56 },
+    },
+    dead = {
+      { xPct = 0.0, yPct = 0.0, wPct = 0.28, hPct = 1.0 },
+    },
+  },
+  -- Floor 3: THE SPLIT — two mirrored islands, center 18% dead.
+  [3] = {
+    zones = {
+      -- Left island
+      { points = M.POINTS.blue,   color = M.COLOR_ZONE_BLUE,   xPct = 0.03, yPct = 0.08, wPct = 0.38, hPct = 0.84 },
+      { points = M.POINTS.yellow, color = M.COLOR_ZONE_YELLOW, xPct = 0.07, yPct = 0.18, wPct = 0.28, hPct = 0.64 },
+      { points = M.POINTS.red,    color = M.COLOR_ZONE_RED,    xPct = 0.12, yPct = 0.30, wPct = 0.18, hPct = 0.40 },
+      -- Right island
+      { points = M.POINTS.blue,   color = M.COLOR_ZONE_BLUE,   xPct = 0.59, yPct = 0.08, wPct = 0.38, hPct = 0.84 },
+      { points = M.POINTS.yellow, color = M.COLOR_ZONE_YELLOW, xPct = 0.65, yPct = 0.18, wPct = 0.28, hPct = 0.64 },
+      { points = M.POINTS.red,    color = M.COLOR_ZONE_RED,    xPct = 0.70, yPct = 0.30, wPct = 0.18, hPct = 0.40 },
+    },
+    dead = {
+      { xPct = 0.41, yPct = 0.0, wPct = 0.18, hPct = 1.0 },
+    },
+  },
+}
+
+-- Returns the zone layout def table for the given floor (clamped to 1..3).
+function M.getZoneLayout(floor)
+  return FLOOR_ZONES[floor] or FLOOR_ZONES[1]
+end
+
 return M

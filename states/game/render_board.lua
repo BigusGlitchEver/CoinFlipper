@@ -34,6 +34,8 @@ local COLOR_ZONE_BLUE     = C.COLOR_ZONE_BLUE
 local COLOR_ZONE_YELLOW   = C.COLOR_ZONE_YELLOW
 local COLOR_ZONE_RED      = C.COLOR_ZONE_RED
 local COLOR_ZONE_BORDER   = C.COLOR_ZONE_BORDER
+local COLOR_DEAD          = C.COLOR_DEAD
+local DEAD_ALPHA          = C.DEAD_ALPHA
 
 local M = {}
 
@@ -164,21 +166,27 @@ function M.draw(self)
   lg.setColor(COLOR_BOARD)
   lg.rectangle("fill", L.boardX, L.boardY, L.boardW, L.boardH)
 
-  -- Board scoring zones: concentric rectangles inside the TARGET area.
-  local tx, ty = L.targetX, L.targetY
-  local tw, th = L.targetW, L.targetH
-  local z1, z2, z3 = L.zone1, L.zone2, L.zone3
-  lg.setColor(COLOR_ZONE_BLUE)
-  lg.rectangle("fill", tx + z1, ty + z1, tw - z1*2, th - z1*2)
-  lg.setColor(COLOR_ZONE_YELLOW)
-  lg.rectangle("fill", tx + z2, ty + z2, tw - z2*2, th - z2*2)
-  lg.setColor(COLOR_ZONE_RED)
-  lg.rectangle("fill", tx + z3, ty + z3, tw - z3*2, th - z3*2)
+  -- Grey dead-zone tints: painted BEFORE the scoring zones (floors 2 & 3).
+  local deadZones = L.deadZones
+  lg.setColor(COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3], DEAD_ALPHA)
+  for i = 1, #deadZones do
+    local d = deadZones[i]
+    lg.rectangle("fill", d.x, d.y, d.w, d.h)
+  end
+
+  -- Board scoring zones: data-driven rects (outermost-first) for this floor.
+  local zones = L.zones
+  for i = 1, #zones do
+    local z = zones[i]
+    lg.setColor(z.color)
+    lg.rectangle("fill", z.x, z.y, z.w, z.h)
+  end
   lg.setColor(COLOR_ZONE_BORDER)
   lg.setLineWidth(2)
-  lg.rectangle("line", tx + z1, ty + z1, tw - z1*2, th - z1*2)
-  lg.rectangle("line", tx + z2, ty + z2, tw - z2*2, th - z2*2)
-  lg.rectangle("line", tx + z3, ty + z3, tw - z3*2, th - z3*2)
+  for i = 1, #zones do
+    local z = zones[i]
+    lg.rectangle("line", z.x, z.y, z.w, z.h)
+  end
 
   -- Divider + label for the blank white start strip.
   lg.setColor(COLOR_ZONE_BORDER)

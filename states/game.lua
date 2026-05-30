@@ -140,6 +140,7 @@ local function resetFloor(self)
   self.floorTargetMet = false
   self.coins          = Spawn.scatterBoard()
   self.runState       = "playing"
+  L.buildZones(self.floor)   -- rebuild scoring zones for the new floor
   lm.setVisible(false)
 end
 
@@ -172,6 +173,7 @@ function Game:enter(prev, houseName)
   self.floorTargetMet = false
 
   L.rebuild()
+  L.buildZones(self.floor)
 
   self.activeCoinItem = Items.byId("coin")  -- fallback for legacy paths
   self.coins          = Spawn.scatterBoard()

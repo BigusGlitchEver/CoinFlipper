@@ -15,6 +15,49 @@ local TOOL_R_FACTOR       = C.TOOL_R_FACTOR
 
 local L = {}
 
+-- Pre-allocated, reused every rebuild so we never churn tables in draw/update.
+L.zones     = {}   -- pixel scoring rects: { x, y, w, h, points, color }
+L.deadZones = {}   -- pixel grey-tint rects: { x, y, w, h }
+L.floor     = 1
+
+-- Converts the proportional zone defs from C.getZoneLayout(floor) into pixel
+-- rects inside the current TARGET area. Repopulates L.zones / L.deadZones in
+-- place (no new tables). Call after L.rebuild() and whenever the floor changes.
+function L.buildZones(floor)
+  L.floor = floor or 1
+  local def = C.getZoneLayout(L.floor)
+  local tx, ty = L.targetX, L.targetY
+  local tw, th = L.targetW, L.targetH
+
+  local zsrc = def.zones
+  local n = #zsrc
+  for i = 1, n do
+    local z = zsrc[i]
+    local dst = L.zones[i]
+    if not dst then dst = {}; L.zones[i] = dst end
+    dst.x      = tx + z.xPct * tw
+    dst.y      = ty + z.yPct * th
+    dst.w      = z.wPct * tw
+    dst.h      = z.hPct * th
+    dst.points = z.points
+    dst.color  = z.color
+  end
+  for i = n + 1, #L.zones do L.zones[i] = nil end
+
+  local dsrc = def.dead
+  local dn = #dsrc
+  for i = 1, dn do
+    local d = dsrc[i]
+    local dst = L.deadZones[i]
+    if not dst then dst = {}; L.deadZones[i] = dst end
+    dst.x = tx + d.xPct * tw
+    dst.y = ty + d.yPct * th
+    dst.w = d.wPct * tw
+    dst.h = d.hPct * th
+  end
+  for i = dn + 1, #L.deadZones do L.deadZones[i] = nil end
+end
+
 function L.rebuild()
   L.W, L.H = lg.getWidth(), lg.getHeight()
 
@@ -45,15 +88,12 @@ function L.rebuild()
   L.targetW = L.boardW
   L.targetH = L.boardH - L.startH
 
-  -- Concentric-rect zone insets (px from each target-area edge).
-  local s  = math.min(L.targetW, L.targetH)
-  L.zone1  = floor(s * 0.08)   -- white → blue  boundary
-  L.zone2  = floor(s * 0.20)   -- blue  → yellow boundary
-  L.zone3  = floor(s * 0.34)   -- yellow → red  boundary
-
   -- Coin + tool size.
   L.coinR = COIN_RADIUS_AT_390W
   L.toolR = L.coinR * TOOL_R_FACTOR
+
+  -- Rebuild the pixel scoring zones for the current floor.
+  L.buildZones(L.floor)
 end
 
 return L
