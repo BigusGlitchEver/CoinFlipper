@@ -8,6 +8,8 @@
 return {
   name      = "Paw Swipe",
   archetype = "shoot_long",
+  -- Corral coins in the bottom-left, forcing a long angled shot to the top-right.
+  spawn = { cxPct = 0.22, cyPct = 0.74, rPct = 0.30 },
   zones = {
     { points = 1, color = "#3380D9", xPct = 0.54, yPct = 0.03, wPct = 0.43, hPct = 0.38 },
     { points = 2, color = "#F5CC1A", xPct = 0.62, yPct = 0.06, wPct = 0.32, hPct = 0.28 },
