@@ -138,6 +138,16 @@ M.HOUSE_FLOORS = {
     "data.boards.long_shot",        -- floor 2
     "data.boards.two_islands",      -- floor 3
   },
+  cat = {
+    "data.boards.cat_floor1",       -- floor 1 (reuse_coins)
+    "data.boards.cat_floor2",       -- floor 2 (shoot_long)
+    "data.boards.cat_floor3",       -- floor 3 (be_exact)
+  },
+  gymbro = {
+    "data.boards.gymbro_floor1",    -- floor 1 (shoot_long)
+    "data.boards.gymbro_floor2",    -- floor 2 (reuse_coins)
+    "data.boards.gymbro_floor3",    -- floor 3 (be_exact)
+  },
 }
 
 return M
