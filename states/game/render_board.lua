@@ -17,7 +17,7 @@ local sin   = math.sin
 local pi    = math.pi
 local huge  = math.huge
 
-local resolveShot = Flip.resolveShot
+local shotFor = Flip.shotFor   -- power incl. per-coin power_scale (aimer == flight)
 
 local TOOL_TRIANGLE     = C.TOOL_TRIANGLE
 local TRI_UX            = C.TRI_UX
@@ -132,7 +132,7 @@ local function drawHoverDebug(coin, item, dotX, dotY)
   local offX, offY, offDist = coin:pressedBy(dotX, dotY)
   if not offX then return end
   local angle = math.atan2(coin.y - dotY, coin.x - dotX)
-  local power = resolveShot(item, offDist)
+  local power = shotFor(item, offDist)
   local endX  = coin.x + cos(angle) * power
   local endY  = coin.y + sin(angle) * power
   lg.setColor(1, 0.08, 0.08, 1)
@@ -199,7 +199,7 @@ function M.draw(self)
     local oX, oY, oDist = tCoin:pressedBy(self.armedDotX, self.armedDotY)
     if oX then
       local tAng = math.atan2(tCoin.y - self.armedDotY, tCoin.x - self.armedDotX)
-      local tPow = resolveShot(tItem, oDist)
+      local tPow = shotFor(tItem, oDist)
       local tlx  = tCoin.x + cos(tAng) * tPow
       local tly  = tCoin.y + sin(tAng) * tPow
       lg.setColor(1, 0.08, 0.08, 1)

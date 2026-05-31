@@ -50,6 +50,18 @@ local function resolveShot(item, offDist)
 end
 M.resolveShot = resolveShot
 
+-- SINGLE SOURCE OF TRUTH for launch distance/arc. resolveShot gives the base
+-- two-zone curve; this applies the coin item's optional power_scale (e.g. the
+-- gold coin's 0.5 -> half distance). Both the live trajectory preview
+-- (render_board) AND the real launch (fireFlip) call this, so the red aimer
+-- always matches the actual flight. Edit reach per coin in data/coins/<id>.lua.
+local function shotFor(item, offDist)
+  local power, arc = resolveShot(item, offDist)
+  local scale = (item and item.power_scale) or 1
+  return power * scale, arc
+end
+M.shotFor = shotFor
+
 -- Per-dot STRICT-CONTAINMENT resolution. Returns count of (dot, coin) pairs.
 local function findPressedCoin(coins, toolX, toolY, toolR, outConflict, isTriangle)
   local count = 0
@@ -180,10 +192,10 @@ fireFlip = function(self, coin, contactX, contactY, depth)
   -- arc is flight HEIGHT only; it never changes where the coin lands, so we
   -- still take it from the region if one is present.
   local region = coin:regionAt(offX, offY, item)
-  local power, arc = resolveShot(item, offDist)
+  -- Distance/arc comes from the shared shotFor so it matches the aimer exactly
+  -- (and applies the coin item's power_scale, e.g. gold coins go half as far).
+  local power, arc = shotFor(item, offDist)
   if region and region.arc then arc = region.arc end
-  -- Gold coins are otherwise too strong: they only travel half as far.
-  if coin.golden then power = power * 0.5 end
   if depth == 0 then self.activeCoin = coin end
   coin:launch(angle, power, arc, item, function(lx, ly)
     local zone, gain = resolveFlip(self, coin, lx, ly, depth)

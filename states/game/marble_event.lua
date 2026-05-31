@@ -25,6 +25,7 @@
 local L     = require("states.game.layout")
 local Coin  = require("entities.coin")
 local Tiers = require("data.coin_tiers")
+local Items = require("data.flip_items")
 
 local lg     = love.graphics
 local random = math.random
@@ -171,12 +172,13 @@ local function landBurstCoin(self, s)
   s.active = false
   local x, y, r = s.tx, s.ty, s.r
 
+  local gold  = Items.byId("gold_coin")
   local c = Coin(x, y, r)
-  c.itemType  = "coin"   -- gold coin, NOT an egg (no egg-split)
-  c.tier      = 0        -- full value, amber-gold fill
+  c.itemType  = "gold_coin"        -- the GOLD coin type (not an egg: no split)
+  c.tier      = 0                  -- full value, gold fill
   c.golden    = true
-  c.scoreMult = 5        -- same bonus as a golden egg-spawned coin
-  c.isSpawned = true     -- spawned coins never multiply / split
+  c.scoreMult = gold.score_mult    -- single source: data/coins/gold_coin.lua
+  c.isSpawned = true               -- spawned coins never multiply / split
   self.coins[#self.coins + 1] = c
 
   -- Same landing resolution as flip.resolveFlip: reverse zone scan, edge-based

@@ -199,12 +199,15 @@ function M.spawnCoinsAt(self, x, y, count, tier)
     ny = max(by + cr, min(by + bh - cr, ny))
     local c = Coin(nx, ny, cr)
     c.isSpawned = true   -- spawned coins never produce further multiplication
-    -- Default: tier 1 (blue fill, 0.75× mult). 1-in-5 chance the coin is
-    -- GOLDEN: tier 0 (full mult) + yellow override + 5× score bonus.
+    -- Default: tier 1 (blue fill, 0.75× mult). 1-in-5 chance the coin is the
+    -- GOLD coin type (data/coins/gold_coin.lua): tier 0, gold fill, half reach,
+    -- and its score multiplier sourced from that one file.
     if lrandom(5) == 1 then
+      local gold  = Items.byId("gold_coin")
       c.tier      = 0
+      c.itemType  = "gold_coin"
       c.golden    = true
-      c.scoreMult = 5
+      c.scoreMult = gold.score_mult
     else
       c.tier = 1
     end
