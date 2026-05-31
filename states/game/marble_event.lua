@@ -1,23 +1,26 @@
 -- states/game/marble_event.lua
 -- The Special Marble Event — a self-contained, removable feature module.
 --
--- A glowing marble rolls diagonally across the board from one wall to the
--- opposite wall. While it travels, egg-coins rain down from the top: coins
--- that land in a scoring zone convert to points instantly (same formula as
+-- A glowing marble rolls slowly and diagonally across the board, leaving a
+-- fading motion trail (like a flipping coin). It is clickable while it rolls:
+-- ONLY when the player clicks it does it burst, exploding a shower of egg-coins
+-- outward from the marble that fly to random spots on the board. Coins that
+-- land in a scoring zone convert to points instantly (same formula as
 -- flip.resolveFlip); coins that land on white space become normal live board
--- coins. The marble is purely cosmetic — it never collides with coins or
--- triggers chain reactions.
+-- coins. If the marble is never clicked it simply exits and nothing happens.
+-- The marble is purely cosmetic — it never collides with coins or chains.
 --
 -- Public API:
---   M.trigger(self)       -- fire an event now (no-op if one is active)
+--   M.trigger(self)       -- start a marble roll (no-op if one is active)
+--   M.click(self, x, y)   -- attempt to pop the marble; true if it was hit
 --   M.update(self, dt)    -- per-frame sim + auto-trigger timer (cheap if idle)
---   M.draw(self)          -- draw marble + falling rain (cheap if idle)
+--   M.draw(self)          -- draw marble + trail + flying coins (cheap if idle)
 --   M.onFloorStart()      -- reset per-floor state (call on enter / next floor)
 --   M.isActive()          -- whether an event is currently running
 --
 -- All state lives in pre-allocated module-level tables; nothing is allocated
 -- inside update() or draw(). (Landing a white-space coin necessarily creates a
--- Coin object — that is the same pattern spawn.lua uses to add a board coin.)
+-- Coin object — the same pattern spawn.lua uses to add a board coin.)
 
 local L    = require("states.game.layout")
 local Coin = require("entities.coin")
@@ -27,49 +30,57 @@ local random = math.random
 local floor  = math.floor
 local max    = math.max
 local sqrt   = math.sqrt
+local sin    = math.sin
+local pi     = math.pi
 
 local M = {}
 
 -- ---------- Tunables ----------
-local MARBLE_SPEED   = 320     -- px/sec along the diagonal
+local MARBLE_SPEED   = 160     -- px/sec along the diagonal (half the old speed)
 local MARBLE_R       = 18      -- marble radius
+local CLICK_PAD      = 10      -- extra forgiveness on the click hit-test
 local MIN_Y_FRAC     = 0.15    -- entry/exit Y stays within 15%..85% of height
 local MAX_Y_FRAC     = 0.85
 local MIN_Y_DIFF     = 0.20    -- entry/exit Y differ by >= 20% of height
-local RAIN_MIN       = 20      -- coin count range, inclusive
+local RAIN_MIN       = 20      -- burst coin count range, inclusive
 local RAIN_MAX       = 30
-local FALL_MIN       = 280     -- px/sec fall speed range
-local FALL_MAX       = 380
-local DRIFT          = 15      -- horizontal drift range: -DRIFT..+DRIFT px/sec
+local FLY_MIN        = 0.45    -- per-coin burst flight time range (seconds)
+local FLY_MAX        = 0.80
+local ARC_MIN        = 26      -- burst arc-pop height range (px)
+local ARC_MAX        = 70
 local AUTO_INTERVAL  = 30      -- seconds between auto-trigger rolls
 local AUTO_CHANCE    = 0.10    -- chance per roll
+local TRAIL_N        = 10      -- motion-trail after-image count
 
 -- Marble colors.
 local MARBLE_FILL = { 0xFF/255, 0xE8/255, 0x7C/255 }  -- #FFE87C iridescent gold
--- Rain egg color: tier-0 amber-yellow #F0C040.
+-- Burst egg color: tier-0 amber-yellow #F0C040.
 local RAIN_FILL   = { 0xF0/255, 0xC0/255, 0x40/255 }
 local RAIN_LINE   = { 0x33/255, 0x33/255, 0x33/255 }
 
 -- ---------- Pre-allocated state ----------
 local POOL_SIZE = RAIN_MAX
-local pool = {}            -- recycled rain-coin slots
+local pool = {}            -- recycled flying-coin slots
 for i = 1, POOL_SIZE do
-  pool[i] = { active = false, x = 0, y = 0, targetY = 0, vx = 0, vy = 0, r = 0 }
+  pool[i] = { active = false, sx = 0, sy = 0, tx = 0, ty = 0,
+              t = 0, dur = 1, r = 0, arc = 0 }
 end
 
-local schedule = {}        -- pre-computed spawn times (seconds since start)
-for i = 1, POOL_SIZE do schedule[i] = 0 end
+-- Motion trail ring (shifted in place; never reallocated).
+local trail = {}
+for i = 1, TRAIL_N do trail[i] = { x = 0, y = 0 } end
 
 local state = {
-  active        = false,   -- event running (marble and/or rain still settling)
-  marbleActive  = false,   -- marble still crossing the board
-  firedThisFloor = false,  -- auto-trigger fires at most once per floor
-  autoTimer     = 0,       -- accumulates toward AUTO_INTERVAL
+  phase          = "idle",  -- "idle" | "rolling" | "burst"
+  active         = false,   -- event running (rolling and/or coins settling)
+  firedThisFloor = false,   -- auto-trigger fires at most once per floor
+  autoTimer      = 0,       -- accumulates toward AUTO_INTERVAL
   -- marble travel
   sx = 0, sy = 0, vx = 0, vy = 0, mx = 0, my = 0,
   travelTime = 0, elapsed = 0,
-  -- rain scheduling
-  coinCount = 0, nextIdx = 1, eggR = 0,
+  trailCount = 0,
+  -- burst
+  eggR = 0,
 }
 
 function M.isActive() return state.active end
@@ -103,54 +114,55 @@ function M.trigger(self)
   state.vx, state.vy = dx / travel, dy / travel
   state.travelTime   = travel
   state.elapsed      = 0
+  state.eggR         = L.coinR
+  state.trailCount   = 0
 
-  -- Rain: pick the count, pre-compute the even spawn schedule.
-  local count = random(RAIN_MIN, RAIN_MAX)
-  state.coinCount = count
-  state.nextIdx   = 1
-  state.eggR      = L.coinR
-  local interval  = travel / count
-  for i = 1, count do schedule[i] = (i - 1) * interval end
+  -- Seed the trail at the entry point so it doesn't streak from (0,0).
+  for i = 1, TRAIL_N do trail[i].x = sx; trail[i].y = sy end
 
-  -- Clear the pool.
   for i = 1, POOL_SIZE do pool[i].active = false end
 
   state.firedThisFloor = true
   state.active         = true
-  state.marbleActive   = true
+  state.phase          = "rolling"
+end
+
+-- ---------- Click to burst ----------
+function M.click(self, x, y)
+  if state.phase ~= "rolling" then return false end
+  local dx = x - state.mx
+  local dy = y - state.my
+  local hit = MARBLE_R + CLICK_PAD
+  if dx * dx + dy * dy > hit * hit then return false end
+
+  -- Explode a shower of egg-coins outward from the marble toward random spots.
+  local bx, by = L.boardX, L.boardY
+  local bw, bh = L.boardW, L.boardH
+  local r      = state.eggR
+  local count  = random(RAIN_MIN, RAIN_MAX)
+  for i = 1, count do
+    local s = pool[i]
+    s.active = true
+    s.sx  = state.mx
+    s.sy  = state.my
+    s.tx  = bx + r + random() * (bw - 2 * r)
+    s.ty  = by + r + random() * (bh - 2 * r)
+    s.t   = 0
+    s.dur = FLY_MIN + random() * (FLY_MAX - FLY_MIN)
+    s.r   = r
+    s.arc = ARC_MIN + random() * (ARC_MAX - ARC_MIN)
+  end
+
+  state.phase = "burst"   -- marble is consumed; coins now fly
+  return true
 end
 
 -- ---------- Internal helpers ----------
 
--- Spawns one rain coin into a free pool slot.
-local function spawnRainCoin()
-  local r  = state.eggR
-  local bx = L.boardX
-  local bw = L.boardW
-  for i = 1, POOL_SIZE do
-    local s = pool[i]
-    if not s.active then
-      s.active  = true
-      s.x       = bx + r + random() * (bw - 2 * r)
-      s.y       = L.boardY                      -- top of the interior
-      s.targetY = L.boardY + r + random() * (L.boardH - 2 * r)
-      s.vx      = (random() * 2 - 1) * DRIFT
-      s.vy      = FALL_MIN + random() * (FALL_MAX - FALL_MIN)
-      s.r       = r
-      return
-    end
-  end
-end
-
--- Resolves a rain coin that has reached its landing point.
-local function landRainCoin(self, s)
+-- Resolves a burst coin that has reached its random landing point.
+local function landBurstCoin(self, s)
   s.active = false
-  local r  = s.r
-  -- Clamp final X inside the interior so a drifted coin never lands clipped.
-  local x = s.x
-  if x < L.boardX + r then x = L.boardX + r end
-  if x > L.boardX + L.boardW - r then x = L.boardX + L.boardW - r end
-  local y = s.targetY
+  local x, y, r = s.tx, s.ty, s.r
 
   -- Zone scan in reverse (highest-value wins), centre-in-rect like resolveFlip.
   local zones = L.zones
@@ -188,37 +200,48 @@ function M.update(self, dt)
     if not state.active then return end   -- still idle: nothing to simulate
   end
 
-  -- Advance the marble + spawn scheduled rain.
-  if state.marbleActive then
+  -- Marble rolling: advance, record trail, exit if never clicked.
+  if state.phase == "rolling" then
     state.elapsed = state.elapsed + dt
     local e = state.elapsed
     state.mx = state.sx + state.vx * e
     state.my = state.sy + state.vy * e
-    while state.nextIdx <= state.coinCount and e >= schedule[state.nextIdx] do
-      spawnRainCoin()
-      state.nextIdx = state.nextIdx + 1
+
+    -- Shift the trail ring in place and write the newest sample at index 1.
+    for i = TRAIL_N, 2, -1 do
+      trail[i].x = trail[i - 1].x
+      trail[i].y = trail[i - 1].y
     end
-    if e >= state.travelTime then state.marbleActive = false end
+    trail[1].x = state.mx
+    trail[1].y = state.my
+    if state.trailCount < TRAIL_N then state.trailCount = state.trailCount + 1 end
+
+    if e >= state.travelTime then
+      -- Exited without being clicked: end the event cleanly.
+      state.phase  = "idle"
+      state.active = false
+      return
+    end
   end
 
-  -- Advance falling rain; land any that reached their target.
-  local anyRain = false
-  for i = 1, POOL_SIZE do
-    local s = pool[i]
-    if s.active then
-      s.x = s.x + s.vx * dt
-      s.y = s.y + s.vy * dt
-      if s.y >= s.targetY then
-        landRainCoin(self, s)
-      else
-        anyRain = true
+  -- Burst: advance flying coins; land any that arrived.
+  if state.phase == "burst" then
+    local anyFlying = false
+    for i = 1, POOL_SIZE do
+      local s = pool[i]
+      if s.active then
+        s.t = s.t + dt / s.dur
+        if s.t >= 1 then
+          landBurstCoin(self, s)
+        else
+          anyFlying = true
+        end
       end
     end
-  end
-
-  -- Event ends once the marble is gone and all rain has settled.
-  if not state.marbleActive and not anyRain then
-    state.active = false
+    if not anyFlying then
+      state.phase  = "idle"
+      state.active = false
+    end
   end
 end
 
@@ -226,20 +249,15 @@ end
 function M.draw(self)
   if not state.active then return end
 
-  -- Falling rain coins (amber egg discs).
-  for i = 1, POOL_SIZE do
-    local s = pool[i]
-    if s.active then
-      lg.setColor(RAIN_FILL[1], RAIN_FILL[2], RAIN_FILL[3], 1)
-      lg.circle("fill", s.x, s.y, s.r)
-      lg.setColor(RAIN_LINE[1], RAIN_LINE[2], RAIN_LINE[3], 1)
-      lg.setLineWidth(2)
-      lg.circle("line", s.x, s.y, s.r)
+  if state.phase == "rolling" then
+    -- Motion trail: faded after-images, oldest dimmest (like a coin's trail).
+    for i = state.trailCount, 1, -1 do
+      local a = 0.28 * (1 - (i - 1) / TRAIL_N)
+      lg.setColor(MARBLE_FILL[1], MARBLE_FILL[2], MARBLE_FILL[3], a)
+      lg.circle("fill", trail[i].x, trail[i].y, MARBLE_R * (1 - (i - 1) * 0.05))
     end
-  end
 
-  -- The glowing marble (halo behind, bright core in front).
-  if state.marbleActive then
+    -- The glowing marble (halo behind, bright core in front).
     local mx, my = state.mx, state.my
     lg.setColor(1, 1, 1, 0.30)
     lg.circle("fill", mx, my, MARBLE_R * 1.7)
@@ -250,16 +268,34 @@ function M.draw(self)
     lg.circle("line", mx, my, MARBLE_R)
   end
 
+  -- Flying burst coins (amber egg discs arcing to their landing spots).
+  if state.phase == "burst" then
+    for i = 1, POOL_SIZE do
+      local s = pool[i]
+      if s.active then
+        local t = s.t
+        local e = 1 - (1 - t) * (1 - t)        -- ease-out for an explosive pop
+        local x = s.sx + (s.tx - s.sx) * e
+        local y = s.sy + (s.ty - s.sy) * e - sin(t * pi) * s.arc
+        lg.setColor(RAIN_FILL[1], RAIN_FILL[2], RAIN_FILL[3], 1)
+        lg.circle("fill", x, y, s.r)
+        lg.setColor(RAIN_LINE[1], RAIN_LINE[2], RAIN_LINE[3], 1)
+        lg.setLineWidth(2)
+        lg.circle("line", x, y, s.r)
+      end
+    end
+  end
+
   lg.setColor(1, 1, 1, 1)
 end
 
 -- ---------- Per-floor reset ----------
 function M.onFloorStart()
+  state.phase          = "idle"
   state.active         = false
-  state.marbleActive   = false
   state.firedThisFloor = false
   state.autoTimer      = 0
-  state.nextIdx        = 1
+  state.trailCount     = 0
   for i = 1, POOL_SIZE do pool[i].active = false end
 end
 

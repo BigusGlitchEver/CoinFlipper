@@ -460,6 +460,9 @@ function Game:mousepressed(x, y, button)
     return  -- eat all other clicks while overlay is up
   end
 
+  -- ── Special Marble Event: click the rolling marble to burst it ────────
+  if MarbleEvent.click(self, x, y) then return end
+
   -- ── DEBUG floor-jump arrows ───────────────────────────────────────────
   -- ► wins the current stage; ◄ jumps back to the previous floor's layout.
   if x >= DBG_NEXT_X and x <= DBG_NEXT_X + DBG_W
