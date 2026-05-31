@@ -43,8 +43,8 @@ local CLICK_PAD      = 10      -- extra forgiveness on the click hit-test
 local MIN_Y_FRAC     = 0.15    -- entry/exit Y stays within 15%..85% of height
 local MAX_Y_FRAC     = 0.85
 local MIN_Y_DIFF     = 0.20    -- entry/exit Y differ by >= 20% of height
-local RAIN_MIN       = 20      -- burst coin count range, inclusive
-local RAIN_MAX       = 30
+local RAIN_MIN       = 10      -- burst coin count range, inclusive (half the old)
+local RAIN_MAX       = 15
 local FLY_MIN        = 0.45    -- per-coin burst flight time range (seconds)
 local FLY_MAX        = 0.80
 local ARC_MIN        = 26      -- burst arc-pop height range (px)

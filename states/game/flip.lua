@@ -182,6 +182,8 @@ fireFlip = function(self, coin, contactX, contactY, depth)
   local region = coin:regionAt(offX, offY, item)
   local power, arc = resolveShot(item, offDist)
   if region and region.arc then arc = region.arc end
+  -- Gold coins are otherwise too strong: they only travel half as far.
+  if coin.golden then power = power * 0.5 end
   if depth == 0 then self.activeCoin = coin end
   coin:launch(angle, power, arc, item, function(lx, ly)
     local zone, gain = resolveFlip(self, coin, lx, ly, depth)
