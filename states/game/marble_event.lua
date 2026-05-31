@@ -22,11 +22,13 @@
 -- inside update() or draw(). (Landing a white-space coin necessarily creates a
 -- Coin object — the same pattern spawn.lua uses to add a board coin.)
 
-local L    = require("states.game.layout")
-local Coin = require("entities.coin")
+local L     = require("states.game.layout")
+local Coin  = require("entities.coin")
+local Tiers = require("data.coin_tiers")
 
 local lg     = love.graphics
 local random = math.random
+local floor  = math.floor
 local max    = math.max
 local sqrt   = math.sqrt
 local sin    = math.sin
@@ -158,16 +160,42 @@ end
 
 -- ---------- Internal helpers ----------
 
--- Resolves a burst coin that has reached its random landing point. Every burst
--- coin stays on the board wherever it lands, becoming a normal live egg coin
--- the player can flip (and that chains/egg-split apply to) — regardless of
--- whether it landed in a scoring zone or on white space.
+-- Resolves a burst coin that has reached its random landing point. The coin is
+-- a GOLD coin (the same kind eggs spawn) — never an egg, so it never splits.
+-- It stays on the board wherever it lands and then follows the exact same
+-- rules as any other landed coin:
+--   • landed in a scoring zone -> it scores and enters the 'done' (used) state,
+--     so the only way to flip it again is to knock it with another coin.
+--   • landed on white space     -> it stays a live, clickable coin.
 local function landBurstCoin(self, s)
   s.active = false
-  local c = Coin(s.tx, s.ty, s.r)
-  c.itemType = "egg"
-  c.tier     = 0
+  local x, y, r = s.tx, s.ty, s.r
+
+  local c = Coin(x, y, r)
+  c.itemType  = "coin"   -- gold coin, NOT an egg (no egg-split)
+  c.tier      = 0        -- full value, amber-gold fill
+  c.golden    = true
+  c.scoreMult = 5        -- same bonus as a golden egg-spawned coin
+  c.isSpawned = true     -- spawned coins never multiply / split
   self.coins[#self.coins + 1] = c
+
+  -- Same landing resolution as flip.resolveFlip: reverse zone scan, edge-based
+  -- by the coin radius. A scoring zone scores and marks the coin used (done).
+  local zones = L.zones
+  for i = #zones, 1, -1 do
+    local z = zones[i]
+    if x >= z.x - r and x <= z.x + z.w + r and
+       y >= z.y - r and y <= z.y + z.h + r then
+      local tierMult = Tiers[(c.tier or 0) + 1].mult
+      local gain = max(1, floor(z.points * tierMult * (self.multiplier or 1) * (c.scoreMult or 1)))
+      self.marbles      = (self.marbles      or 0) + gain
+      self.floorMarbles = (self.floorMarbles or 0) + gain
+      self.runMarbles   = (self.runMarbles   or 0) + gain
+      self.scoreFlash   = 0.20   -- reuse existing score-burst feedback
+      c.used = true              -- enter the 'done' state
+      return
+    end
+  end
 end
 
 -- ---------- Per-frame update ----------
