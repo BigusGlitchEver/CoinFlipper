@@ -27,7 +27,6 @@ local Coin = require("entities.coin")
 
 local lg     = love.graphics
 local random = math.random
-local floor  = math.floor
 local max    = math.max
 local sqrt   = math.sqrt
 local sin    = math.sin
@@ -159,28 +158,13 @@ end
 
 -- ---------- Internal helpers ----------
 
--- Resolves a burst coin that has reached its random landing point.
+-- Resolves a burst coin that has reached its random landing point. Every burst
+-- coin stays on the board wherever it lands, becoming a normal live egg coin
+-- the player can flip (and that chains/egg-split apply to) — regardless of
+-- whether it landed in a scoring zone or on white space.
 local function landBurstCoin(self, s)
   s.active = false
-  local x, y, r = s.tx, s.ty, s.r
-
-  -- Zone scan in reverse (highest-value wins), centre-in-rect like resolveFlip.
-  local zones = L.zones
-  for i = #zones, 1, -1 do
-    local z = zones[i]
-    if x >= z.x and x <= z.x + z.w and y >= z.y and y <= z.y + z.h then
-      -- Same formula as resolveFlip: tier 0 (mult 1), depth 0 (chain 1),
-      -- scoreMult 1 -> points * self.multiplier.
-      local gain = max(1, floor(z.points * (self.multiplier or 1)))
-      self.floorMarbles = (self.floorMarbles or 0) + gain
-      self.runMarbles   = (self.runMarbles   or 0) + gain
-      self.scoreFlash   = 0.20   -- reuse existing score-burst feedback
-      return
-    end
-  end
-
-  -- White space: becomes a normal live egg board coin (split applies later).
-  local c = Coin(x, y, r)
+  local c = Coin(s.tx, s.ty, s.r)
   c.itemType = "egg"
   c.tier     = 0
   self.coins[#self.coins + 1] = c
