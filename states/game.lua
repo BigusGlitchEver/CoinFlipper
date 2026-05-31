@@ -24,6 +24,7 @@ local Flip       = require("states.game.flip")
 local Spawn      = require("states.game.spawn")
 local RenderHud  = require("states.game.render_hud")
 local RenderBoard = require("states.game.render_board")
+local MarbleEvent = require("states.game.marble_event")
 local CardPanel  = require("ui.card_panel")
 
 local lg    = love.graphics
@@ -150,6 +151,7 @@ local function resetFloor(self)
   loadFloorBoard(self)       -- load this floor's board BEFORE scattering coins
   self.coins          = Spawn.scatterBoard()
   self.runState       = "playing"
+  MarbleEvent.onFloorStart()
   lm.setVisible(false)
 end
 
@@ -186,6 +188,7 @@ function Game:enter(prev, houseName)
 
   self.activeCoinItem = Items.byId("coin")  -- fallback for legacy paths
   self.coins          = Spawn.scatterBoard()
+  MarbleEvent.onFloorStart()
   self.activeCoin     = nil
   self.hoveredCoin    = nil
   self.conflictDots   = self.conflictDots or {}
@@ -291,6 +294,7 @@ function Game:update(dt)
 
   self:_refreshHover()
   for i = 1, #self.coins do self.coins[i]:update(dt) end
+  MarbleEvent.update(self, dt)
   if self.activeCoin and not self.activeCoin.flipping then
     self.activeCoin = nil
   end
@@ -416,6 +420,7 @@ function Game:draw()
   -- Left notebook HUD, then the playing surface.
   RenderHud.draw(self)
   RenderBoard.draw(self)
+  MarbleEvent.draw(self)
   if self.runState == "playing" then
     drawDebugArrows()
   else
@@ -511,7 +516,12 @@ function Game:keypressed(k)
       return
     end
   end
+  -- DEBUG ONLY: remove before release
   if k == "m" then
+    MarbleEvent.trigger(self)
+    return
+  end
+  if k == "escape" then
     StateMachine.switch("map")
   elseif k == "r" then
     Game:enter(nil, self.houseName)
